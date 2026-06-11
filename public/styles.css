@@ -557,3 +557,28 @@ button.card.alive strong,
 .influence-card.dead::before, .card.dead::before { display: none; }
 .influence-card.back small { display: none; }
 .card.alive::before { display: none; }
+
+/* v13: rematch and target-click affordance */
+.player.targetable-player {
+  cursor: pointer;
+  border-color: var(--primary-2);
+  box-shadow: 0 0 0 3px rgba(64,91,143,.16), 0 10px 22px rgba(0,0,0,.08);
+}
+.player.targetable-player:hover,
+.player.targetable-player:focus {
+  transform: translateY(-1px);
+  outline: none;
+  background: #eef3ff;
+}
+.player.targetable-player::after {
+  content: "対象にする";
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: var(--primary);
+  color: #fff;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: .72rem;
+  font-weight: 900;
+}

@@ -433,18 +433,46 @@ function reconnectRoom(socket, roomId, clientId) {
   return room.id;
 }
 
-function startGame(socket, roomId) {
-  const room = requireRoom(roomId);
-  if (socket.data.clientId !== room.hostId) throw new Error('ホストだけが開始できます。');
-  if (room.players.length < MIN_PLAYERS) throw new Error('2人以上で開始できます。');
+function resetRoomForNewGame(room) {
   room.deck = createDeck();
+  room.pending = null;
+  room.awaitingLoss = null;
+  room.exchange = null;
+  room.winnerId = null;
+  room.phase = 'action';
+
   for (const player of room.players) {
+    player.left = false;
     player.coins = 2;
     player.cards = draw(room, 2);
   }
-  room.phase = 'action';
-  room.currentTurnIndex = 0;
+
+  const hostIndex = room.players.findIndex((player) => player.id === room.hostId && !player.left);
+  room.currentTurnIndex = hostIndex >= 0 ? hostIndex : 0;
+}
+
+function startGame(socket, roomId) {
+  const room = requireRoom(roomId);
+  if (socket.data.clientId !== room.hostId) throw new Error('ホストだけが開始できます。');
+  if (room.phase !== 'waiting') throw new Error('ゲーム開始は待機中だけ可能です。');
+  if (room.players.length < MIN_PLAYERS) throw new Error('2人以上で開始できます。');
+  resetRoomForNewGame(room);
   addLog(room, 'ゲームを開始しました。');
+  emitRoom(room.id);
+}
+
+function rematch(socket, roomId) {
+  const room = requireRoom(roomId);
+  if (socket.data.clientId !== room.hostId) throw new Error('ホストだけが再戦できます。');
+  if (room.phase !== 'finished') throw new Error('再戦はゲーム終了後にできます。');
+
+  const activePlayers = room.players.filter((player) => !player.left);
+  if (activePlayers.length < MIN_PLAYERS) throw new Error('再戦には2人以上必要です。');
+  room.players = activePlayers;
+  if (!room.players.some((player) => player.id === room.hostId)) room.hostId = room.players[0].id;
+
+  resetRoomForNewGame(room);
+  addLog(room, '同じメンバーでもう一度対戦を開始しました。');
   emitRoom(room.id);
 }
 
@@ -661,6 +689,7 @@ io.on('connection', (socket) => {
   socket.on('joinRoom', ({ roomId, name, clientId } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: joinRoom(socket, roomId, name, clientId), playerId: socket.data.clientId })));
   socket.on('reconnectRoom', ({ roomId, clientId } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: reconnectRoom(socket, roomId, clientId), playerId: socket.data.clientId })));
   socket.on('startGame', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => startGame(socket, roomId)));
+  socket.on('rematch', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => rematch(socket, roomId)));
   socket.on('takeAction', ({ roomId, action, targetId } = {}, callback = () => {}) => safe(socket, callback, () => takeAction(socket, roomId, { action, targetId })));
   socket.on('passReaction', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => pass(socket, roomId)));
   socket.on('block', ({ roomId, role } = {}, callback = () => {}) => safe(socket, callback, () => block(socket, roomId, { role })));

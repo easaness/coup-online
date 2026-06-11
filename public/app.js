@@ -260,14 +260,17 @@ function render() {
     status = state.exchangeOptions?.length ? '残したい2枚を選んで確定してください。' : '交換するプレイヤーの選択を待っています。';
   } else if (state.phase === 'finished') {
     headline = `${winner?.name || ''} の勝利！`;
-    status = 'ゲームが終了しました。新しく遊ぶ場合はページを開き直して部屋を作成してください。';
+    status = state.hostId === me?.id ? '同じメンバーでもう一度対戦できます。' : 'ホストが再戦を開始できます。';
   }
   $('headline').textContent = headline;
   $('status').textContent = status;
 
   const startVisible = state.phase === 'waiting' && state.hostId === me?.id;
+  const rematchVisible = state.phase === 'finished' && state.hostId === me?.id;
   $('startBtn').style.display = startVisible ? 'inline-block' : 'none';
+  $('rematchBtn').style.display = rematchVisible ? 'inline-block' : 'none';
   $('startBtn').onclick = () => emit('startGame', { roomId: state.roomId });
+  $('rematchBtn').onclick = () => emit('rematch', { roomId: state.roomId });
   $('copyRoomBtn').onclick = async () => {
     try {
       await navigator.clipboard.writeText(state.roomId);
@@ -299,7 +302,19 @@ function renderPlayers() {
   $('playerCount').textContent = `${state.players.length}人`;
   for (const p of state.players) {
     const div = document.createElement('div');
-    div.className = ['player', p.id === state.currentTurnPlayerId ? 'current' : '', p.id === state.me?.id ? 'me' : '', p.aliveCards === 0 ? 'dead' : ''].filter(Boolean).join(' ');
+    const isTargetable = Boolean(selectedAction && state.phase === 'action' && state.currentTurnPlayerId === state.me?.id && p.id !== state.me?.id && p.aliveCards > 0);
+    div.className = ['player', p.id === state.currentTurnPlayerId ? 'current' : '', p.id === state.me?.id ? 'me' : '', p.aliveCards === 0 ? 'dead' : '', isTargetable ? 'targetable-player' : ''].filter(Boolean).join(' ');
+    if (isTargetable) {
+      div.tabIndex = 0;
+      div.title = `${p.name} に ${actionName(selectedAction)} を実行`;
+      div.onclick = () => emit('takeAction', { roomId: state.roomId, action: selectedAction, targetId: p.id });
+      div.onkeydown = (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          emit('takeAction', { roomId: state.roomId, action: selectedAction, targetId: p.id });
+        }
+      };
+    }
     const badges = [];
     if (p.id === state.hostId) badges.push('<span class="stat">Host</span>');
     if (p.id === state.currentTurnPlayerId && state.phase !== 'waiting') badges.push('<span class="stat turn-stat">Turn</span>');
@@ -475,7 +490,7 @@ function renderActions() {
     if (def.requiresTarget) {
       const targetHint = document.createElement('p');
       targetHint.className = 'muted';
-      targetHint.textContent = '下のプレイヤーボタンをクリックすると、確認ボタンなしでアクションを宣言します。';
+      targetHint.textContent = '右のプレイヤーカード、または下の対象ボタンをクリックすると実行されます。';
       detail.appendChild(targetHint);
       detail.appendChild(targetButtonsForAction(selectedAction));
     }
@@ -483,7 +498,7 @@ function renderActions() {
   } else {
     const hint = document.createElement('p');
     hint.className = 'muted';
-    hint.textContent = 'カード不要のアクションは1クリックで実行されます。対象が必要なアクションは、次に対象をクリックしてください。';
+    hint.textContent = '対象が必要なアクションは、次にプレイヤーカードをクリックしてください。';
     box.appendChild(hint);
   }
 
