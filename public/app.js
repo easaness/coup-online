@@ -237,6 +237,7 @@ function render() {
   $('roomBadge').classList.remove('hidden');
   $('statusBoard').classList.remove('hidden');
   $('gameLayout').classList.remove('hidden');
+  $('gameLayout').classList.toggle('target-picking-mode', isPickingTarget());
   $('logPanel').classList.remove('hidden');
   $('roomIdLabel').textContent = state.roomId;
   $('myCoins').textContent = state.me?.coins ?? 0;
@@ -409,7 +410,7 @@ function executeOrAskTarget(actionKey, def) {
   if (def.requiresTarget) {
     selectedAction = actionKey;
     selectedTargetId = '';
-    renderActions();
+    render();
     return;
   }
   selectedAction = '';
@@ -445,12 +446,12 @@ function renderActions() {
     if (def?.requiresTarget) {
       const box = document.createElement('div');
       box.className = 'actionBox target-only-box';
-      box.innerHTML = `<h3>${escapeHtml(def.label)} の対象を選択</h3><p>対象にするプレイヤーをクリックしてください。</p>`;
+      box.innerHTML = `<h3>${escapeHtml(def.label)} の対象を選択</h3><p>対象プレイヤーだけを選んでください。</p>`;
       box.appendChild(targetButtonsForAction(selectedAction));
       const cancel = createButton('アクション選択に戻る', () => {
         selectedAction = '';
         selectedTargetId = '';
-        renderActions();
+        render();
       }, 'secondary');
       box.appendChild(cancel);
       root.appendChild(box);
@@ -629,6 +630,9 @@ function canBlockReact() {
 function renderActionGuide() {
   const root = $('actionGuide');
   root.innerHTML = '';
+  const panel = root.closest('.rule-panel');
+  if (panel) panel.classList.toggle('hidden', isPickingTarget());
+  if (isPickingTarget()) return;
   if (!state.actions) return;
   for (const [key, def] of Object.entries(state.actions)) {
     const help = ACTION_HELP[key] || { effect: '', block: '' };
