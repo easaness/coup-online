@@ -242,3 +242,217 @@ button.big { padding: 14px 18px; min-width: 150px; }
   .form-grid { grid-template-columns: 1fr; }
   .card { width: min(160px, calc(50vw - 34px)); }
 }
+
+/* v4: clearer action requirements and influence card states */
+.card-legend {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 0 0 12px;
+  color: #544b40;
+  font-weight: 800;
+  font-size: .84rem;
+}
+.card-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend-dot { width: 13px; height: 13px; border-radius: 4px; display: inline-block; border: 1px solid #b9aa96; }
+.legend-dot.alive { background: #f8efd9; box-shadow: inset 0 0 0 2px rgba(201,154,54,.45); }
+.legend-dot.back { background: #1d263a; }
+.legend-dot.dead { background: #b9b9b9; }
+
+.table-influence {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 2px 0 1px;
+}
+.influence-card {
+  position: relative;
+  width: 86px;
+  height: 112px;
+  border-radius: 12px;
+  border: 1px solid #c9b99f;
+  padding: 8px;
+  overflow: hidden;
+  display: grid;
+  align-content: space-between;
+  box-shadow: 0 8px 16px rgba(31,24,16,.12);
+}
+.influence-card small { font-size: .65rem; font-weight: 950; letter-spacing: .05em; text-transform: uppercase; }
+.influence-card strong { font-size: .86rem; line-height: 1.08; }
+.influence-card.back {
+  color: rgba(255,255,255,.84);
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.09), transparent 38%),
+    repeating-linear-gradient(45deg, rgba(255,255,255,.08) 0 7px, transparent 7px 14px),
+    #1c2539;
+  border-color: #3d4f78;
+}
+.influence-card.back .card-pattern {
+  position: absolute;
+  inset: 30px 6px auto;
+  text-align: center;
+  font-weight: 1000;
+  letter-spacing: .12em;
+  color: rgba(255,255,255,.55);
+}
+.influence-card.dead {
+  color: #363636;
+  background: linear-gradient(180deg, #dedede, #bcbcbc);
+  border-color: #9a9a9a;
+  filter: grayscale(1);
+}
+.influence-card.dead::before {
+  content: "公開";
+  position: absolute;
+  right: -21px;
+  top: 11px;
+  transform: rotate(35deg);
+  background: rgba(60,60,60,.84);
+  color: white;
+  padding: 3px 25px;
+  font-size: .62rem;
+  font-weight: 1000;
+}
+.influence-card.empty {
+  background: rgba(255,255,255,.36);
+  border-style: dashed;
+  color: #9d9182;
+  box-shadow: none;
+}
+.card.alive {
+  border-color: var(--gold);
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.92), rgba(248,231,188,.96)),
+    #f8efd9;
+  box-shadow: 0 12px 24px rgba(201,154,54,.18);
+}
+.card.alive::before {
+  content: "生存";
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border-radius: 999px;
+  background: #fff8e7;
+  color: #80601e;
+  border: 1px solid #ddbf73;
+  padding: 3px 7px;
+  font-size: .68rem;
+  font-weight: 1000;
+}
+.card.dead {
+  background: linear-gradient(180deg, #e1e1e1, #bdbdbd);
+  border-color: #9b9b9b;
+  color: #444;
+  filter: grayscale(1);
+  opacity: .82;
+  text-decoration: none;
+}
+.card.dead::before {
+  content: "公開済み";
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border-radius: 999px;
+  background: #515151;
+  color: white;
+  padding: 3px 7px;
+  font-size: .68rem;
+  font-weight: 1000;
+}
+.card.dead strong { text-decoration: line-through; }
+.lose-choice { border-color: var(--danger); }
+.lose-choice:hover { box-shadow: 0 0 0 4px rgba(166,64,53,.18), 0 12px 24px rgba(46,34,19,.11); }
+
+.action-card { min-height: 164px; }
+.claim-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.claim-badge,
+.truth-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: .75rem;
+  font-weight: 1000;
+  line-height: 1.1;
+}
+.claim-badge { background: #edf1f9; color: #263a5f; border: 1px solid #c6d1e8; }
+.claim-line.no-claim .claim-badge { background: #e8f3ec; color: #236044; border-color: #bddbc7; }
+.claim-line.claim-needed .claim-badge { background: #fff1cb; color: #76550e; border-color: #e4c573; }
+.truth-badge { background: #f4eee4; color: #685a49; border: 1px solid #ded0bd; }
+.claim-line.claim-needed .truth-badge { background: #fff7e5; color: #8a5d09; }
+.claim-note {
+  display: grid;
+  gap: 4px;
+  border-radius: 14px;
+  padding: 11px 12px;
+  border: 1px solid #d7c9b7;
+  background: #f7f0e5;
+  color: #4e463c;
+}
+.claim-note strong { font-size: .92rem; }
+.claim-note span { color: var(--muted); line-height: 1.45; }
+.claim-note.claim-needed { background: #fff7e2; border-color: #e5c772; }
+.claim-note.no-claim { background: #edf7ef; border-color: #bedcc7; }
+.small-pill.claim-needed { background: #fff1cb; color: #76550e; }
+.small-pill.no-claim { background: #e8f3ec; color: #236044; }
+.guide-mini {
+  margin-top: 5px;
+  color: #7b7164;
+  font-size: .78rem;
+  font-weight: 800;
+}
+.phase-chip.danger { background: #f3d5d2; color: #842f28; }
+.phase-chip.success { background: #d9ecdf; color: #236044; }
+
+
+/* v5: action safety color coding */
+.action-card.free-safe,
+.claim-line.free-safe .claim-badge,
+.claim-line.free-safe .truth-badge,
+.claim-note.free-safe,
+.small-pill.free-safe {
+  background: #e8f3ec;
+  border-color: #bddbc7;
+  color: #236044;
+}
+.action-card.owned-safe,
+.claim-line.owned-safe .claim-badge,
+.claim-line.owned-safe .truth-badge,
+.claim-note.owned-safe,
+.small-pill.owned-safe {
+  background: #edf4ff;
+  border-color: #b8ccef;
+  color: #254a83;
+}
+.action-card.bluff-risk,
+.claim-line.bluff-risk .claim-badge,
+.claim-line.bluff-risk .truth-badge,
+.claim-note.bluff-risk,
+.small-pill.bluff-risk {
+  background: #fff0ee;
+  border-color: #e3b7b1;
+  color: #8b2f27;
+}
+.action-card.free-safe { border-width: 2px; }
+.action-card.owned-safe { border-width: 2px; }
+.action-card.bluff-risk { border-width: 2px; }
+.action-card.free-safe .desc,
+.action-card.owned-safe .desc,
+.action-card.bluff-risk .desc { color: #4f4a43; }
+.action-card.bluff-risk .truth-badge { font-weight: 1100; }
+.claim-note.bluff-risk span,
+.claim-note.owned-safe span,
+.claim-note.free-safe span { color: inherit; opacity: .9; }
+.action-safety-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.action-safety-legend .small-pill { border: 1px solid currentColor; }

@@ -10,14 +10,117 @@ const roleName = (role) => state?.roles?.[role] || role;
 const actionName = (action) => state?.actions?.[action]?.label || action;
 
 const ACTION_HELP = {
-  income: { summary: '安全に1コイン獲得。誰にも止められません。', effect: '+1 coin', risk: '安全' },
-  foreignAid: { summary: '2コイン獲得。Dukeにブロックされます。', effect: '+2 coins', risk: 'ブロックあり' },
-  coup: { summary: '7コイン支払い、対象の影響力を1枚失わせます。', effect: '対象-1', risk: '不可避' },
-  tax: { summary: 'Dukeを主張して3コイン獲得。チャレンジされます。', effect: '+3 coins', risk: 'チャレンジあり' },
-  assassinate: { summary: 'Assassinを主張。3コイン支払い、対象を暗殺します。', effect: '対象-1', risk: 'チャレンジ/ブロック' },
-  exchange: { summary: 'Ambassadorを主張。山札から2枚引き、2枚を残します。', effect: '交換', risk: 'チャレンジあり' },
-  steal: { summary: 'Captainを主張。対象から最大2コイン奪います。', effect: '奪取', risk: 'チャレンジ/ブロック' }
+  income: {
+    summary: '安全に1コイン獲得。誰にも止められません。',
+    effect: '+1 coin',
+    risk: '安全',
+    requirement: 'カード不要',
+    honesty: 'そのまま実行',
+    tone: 'safe'
+  },
+  foreignAid: {
+    summary: '2コイン獲得。Dukeにブロックされます。',
+    effect: '+2 coins',
+    risk: 'ブロックあり',
+    requirement: 'カード不要',
+    honesty: 'そのまま実行',
+    tone: 'safe'
+  },
+  coup: {
+    summary: '7コイン支払い、対象の影響力を1枚失わせます。',
+    effect: '対象-1',
+    risk: '不可避',
+    requirement: 'カード不要',
+    honesty: 'そのまま実行',
+    tone: 'danger'
+  },
+  tax: {
+    summary: 'Dukeを主張して3コイン獲得。',
+    effect: '+3 coins',
+    risk: 'チャレンジあり',
+    requirement: 'Dukeを主張',
+    tone: 'claim'
+  },
+  assassinate: {
+    summary: 'Assassinを主張。3コイン支払い、対象を暗殺します。',
+    effect: '対象-1',
+    risk: 'チャレンジ/Contessaでブロック',
+    requirement: 'Assassinを主張',
+    tone: 'danger'
+  },
+  exchange: {
+    summary: 'Ambassadorを主張。山札から2枚引き、2枚を残します。',
+    effect: '交換',
+    risk: 'チャレンジあり',
+    requirement: 'Ambassadorを主張',
+    tone: 'claim'
+  },
+  steal: {
+    summary: 'Captainを主張。対象から最大2コイン奪います。',
+    effect: '奪取',
+    risk: 'チャレンジ/Captain・Ambassadorでブロック',
+    requirement: 'Captainを主張',
+    tone: 'claim'
+  }
 };
+
+function roleToken(role, kind = '') {
+  return `<span class="role-token ${kind}">${escapeHtml(roleName(role))}</span>`;
+}
+
+function hasAliveRole(role) {
+  return Boolean((state?.me?.cards || []).some((card) => card.alive && card.role === role));
+}
+
+function actionRequirement(def, key) {
+  const help = ACTION_HELP[key] || {};
+  if (!def.claim) return {
+    label: help.requirement || 'カード不要',
+    status: 'リスクなし',
+    detail: '役職カードを持っていなくても、安全に実行できるアクションです。',
+    className: 'free-safe'
+  };
+
+  const owned = hasAliveRole(def.claim);
+  if (owned) return {
+    label: `${roleName(def.claim)} 所持中`,
+    status: 'リスクなし',
+    detail: `あなたは生存中の${roleName(def.claim)}を持っています。チャレンジされても証明できます。`,
+    className: 'owned-safe'
+  };
+
+  return {
+    label: `${roleName(def.claim)} 未所持`,
+    status: 'ダウトリスクあり',
+    detail: `現在、生存中の${roleName(def.claim)}を持っていません。使用はできますが、チャレンジされると影響力を失います。`,
+    className: 'bluff-risk'
+  };
+}
+
+function blockText(def) {
+  if (!def.blockableBy || !def.blockableBy.length) return 'ブロック不可';
+  return `${def.blockableBy.map((role) => roleName(role)).join(' / ')} でブロック可`;
+}
+
+function cardSlotHtml({ face = 'back', role = '', label = '', mine = false } = {}) {
+  if (face === 'back') {
+    return `<div class="influence-card back" title="未公開の生存カード"><span class="card-pattern">COUP</span><small>未公開</small></div>`;
+  }
+  const title = label || (face === 'dead' ? '公開済み・失ったカード' : '生存中の自分のカード');
+  return `<div class="influence-card ${face}" title="${escapeHtml(title)}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(roleName(role))}</strong>${mine && face === 'alive' ? '<span class="alive-ribbon">生存</span>' : ''}</div>`;
+}
+
+function influenceSlotsForPlayer(player) {
+  const slots = [];
+  for (let i = 0; i < player.aliveCards; i++) slots.push(cardSlotHtml({ face: 'back' }));
+  for (const card of player.revealed || []) slots.push(cardSlotHtml({ face: 'dead', role: card.role, label: '公開済み' }));
+  while (slots.length < 2) slots.push('<div class="influence-card empty"><small>なし</small></div>');
+  return slots.slice(0, 2).join('');
+}
+
+function cardStateLabel(card) {
+  return card.alive ? '生存中・非公開' : '公開済み・失ったカード';
+}
 
 const PHASE_TEXT = {
   waiting: '参加待ち',
@@ -183,22 +286,20 @@ function renderPlayers() {
     div.className = ['player', p.id === state.currentTurnPlayerId ? 'current' : '', p.id === state.me?.id ? 'me' : '', p.aliveCards === 0 ? 'dead' : ''].filter(Boolean).join(' ');
     const badges = [];
     if (p.id === state.hostId) badges.push('<span class="stat">Host</span>');
-    if (p.id === state.currentTurnPlayerId && state.phase !== 'waiting') badges.push('<span class="stat">Turn</span>');
+    if (p.id === state.currentTurnPlayerId && state.phase !== 'waiting') badges.push('<span class="stat turn-stat">Turn</span>');
     if (!p.connected) badges.push('<span class="stat">切断</span>');
-    if (p.aliveCards === 0) badges.push('<span class="stat">脱落</span>');
-    const revealed = p.revealed.length
-      ? `<div class="revealed">${p.revealed.map((c) => `<span class="role-tag">${escapeHtml(roleName(c.role))}</span>`).join('')}</div>`
-      : '<span class="muted">公開カードなし</span>';
+    if (p.aliveCards === 0) badges.push('<span class="stat dead-stat">脱落</span>');
     div.innerHTML = `
       <div class="player-top">
         <span class="player-name">${escapeHtml(p.name)}${p.id === state.me?.id ? '（あなた）' : ''}</span>
         <div class="player-stats">${badges.join('')}</div>
       </div>
+      <div class="table-influence" aria-label="${escapeHtml(p.name)}の影響力カード">${influenceSlotsForPlayer(p)}</div>
       <div class="player-stats">
-        <span class="stat">🪙 ${p.coins}</span>
-        <span class="stat">影響力 ${p.aliveCards}</span>
+        <span class="stat coin-stat">🪙 ${p.coins}</span>
+        <span class="stat alive-stat">生存 ${p.aliveCards}枚</span>
+        <span class="stat revealed-stat">公開 ${(p.revealed || []).length}枚</span>
       </div>
-      ${revealed}
     `;
     root.appendChild(div);
   }
@@ -209,15 +310,26 @@ function renderCards() {
   root.innerHTML = '';
   const cards = state.me?.cards || [];
   if (!cards.length) {
-    root.innerHTML = '<p class="muted">ゲーム開始後、自分のカードがここに表示されます。</p>';
+    root.innerHTML = '<p class="muted">ゲーム開始後、自分のカードがここに表示されます。相手のカードは裏向きで表示されます。</p>';
     return;
   }
+  const legend = document.createElement('div');
+  legend.className = 'card-legend';
+  legend.innerHTML = `
+    <span><i class="legend-dot alive"></i>生存中の自分のカード</span>
+    <span><i class="legend-dot back"></i>相手の未公開カード</span>
+    <span><i class="legend-dot dead"></i>公開済み・失ったカード</span>
+  `;
+  root.appendChild(legend);
+  const wrap = document.createElement('div');
+  wrap.className = 'cards';
   for (const card of cards) {
     const div = document.createElement('div');
-    div.className = `card ${card.alive ? '' : 'dead'}`;
-    div.innerHTML = `<small>${card.alive ? 'Alive' : 'Revealed'}</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
-    root.appendChild(div);
+    div.className = `card ${card.alive ? 'alive' : 'dead'}`;
+    div.innerHTML = `<small>${escapeHtml(cardStateLabel(card))}</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
+    wrap.appendChild(div);
   }
+  root.appendChild(wrap);
 }
 
 function actionDisabledReason(key, def) {
@@ -256,7 +368,7 @@ function renderActions() {
 
   const box = document.createElement('div');
   box.className = 'actionBox';
-  box.innerHTML = '<h3>アクションを選択</h3><p>カードを持っていなくても役職アクションを主張できます。ただしチャレンジされる可能性があります。</p>';
+  box.innerHTML = '<h3>アクションを選択</h3><p>色で安全度を確認できます。</p><div class="action-safety-legend"><span class="small-pill free-safe">緑: カード不要・リスクなし</span><span class="small-pill owned-safe">青: 所持中・リスクなし</span><span class="small-pill bluff-risk">赤: 未所持・ダウトリスクあり</span></div>';
 
   if (state.me.coins >= 10) {
     const warning = document.createElement('div');
@@ -273,13 +385,19 @@ function renderActions() {
     const button = document.createElement('button');
     button.type = 'button';
     button.disabled = Boolean(reason);
-    button.className = ['action-card', selectedAction === key ? 'selected-action' : '', state.me.coins >= 10 && key === 'coup' ? 'forced' : ''].filter(Boolean).join(' ');
+    const req = actionRequirement(def, key);
+    button.className = ['action-card', req.className, selectedAction === key ? 'selected-action' : '', state.me.coins >= 10 && key === 'coup' ? 'forced' : ''].filter(Boolean).join(' ');
     button.innerHTML = `
       <span class="name">${escapeHtml(def.label)}${def.cost ? ` · ${def.cost} coins` : ''}</span>
+      <span class="claim-line ${req.className}">
+        <span class="claim-badge">${escapeHtml(req.label)}</span>
+        <span class="truth-badge">${escapeHtml(req.status)}</span>
+      </span>
       <span class="desc">${escapeHtml(help.summary)}</span>
       <span class="meta">
         <span class="phase-chip">${escapeHtml(help.effect)}</span>
         <span class="phase-chip ${help.risk.includes('チャレンジ') || help.risk.includes('ブロック') ? 'warning' : ''}">${escapeHtml(help.risk)}</span>
+        <span class="phase-chip ${def.blockableBy?.length ? 'danger' : 'success'}">${escapeHtml(blockText(def))}</span>
       </span>
     `;
     button.onclick = () => {
@@ -296,7 +414,12 @@ function renderActions() {
     const def = state.actions[selectedAction];
     const detail = document.createElement('div');
     detail.className = 'action-detail';
+    const req = actionRequirement(def, selectedAction);
     detail.appendChild(makeChip(`${def.label} を実行します`, phaseKind(state.phase)));
+    const note = document.createElement('div');
+    note.className = `claim-note ${req.className}`;
+    note.innerHTML = `<strong>${escapeHtml(req.label)}</strong><span>${escapeHtml(req.detail)}</span>`;
+    detail.appendChild(note);
     if (def.requiresTarget) detail.appendChild(targetSelect());
     const confirm = createButton('このアクションを宣言', () => {
       emit('takeAction', { roomId: state.roomId, action: selectedAction, targetId: def.requiresTarget ? selectedTargetId : null });
@@ -389,8 +512,8 @@ function renderSpecials() {
       cards.className = 'cards';
       for (const card of state.me.cards.filter((c) => c.alive)) {
         const cardButton = document.createElement('button');
-        cardButton.className = 'card selectable';
-        cardButton.innerHTML = `<small>Reveal</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
+        cardButton.className = 'card alive selectable lose-choice';
+        cardButton.innerHTML = `<small>このカードを公開して失う</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
         cardButton.onclick = () => emit('chooseCardToLose', { roomId: state.roomId, cardId: card.id });
         cards.appendChild(cardButton);
       }
@@ -410,8 +533,8 @@ function renderSpecials() {
       cards.className = 'cards';
       for (const card of state.exchangeOptions) {
         const div = document.createElement('div');
-        div.className = `card selectable ${exchangeSelection.has(card.id) ? 'selected' : ''}`;
-        div.innerHTML = `<small>${exchangeSelection.has(card.id) ? 'Keep' : 'Option'}</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
+        div.className = `card alive selectable ${exchangeSelection.has(card.id) ? 'selected' : ''}`;
+        div.innerHTML = `<small>${exchangeSelection.has(card.id) ? '残すカード' : '交換候補'}</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
         div.onclick = () => {
           if (exchangeSelection.has(card.id)) exchangeSelection.delete(card.id);
           else if (exchangeSelection.size < 2) exchangeSelection.add(card.id);
@@ -445,7 +568,15 @@ function renderActionGuide() {
     const help = ACTION_HELP[key] || { summary: '', risk: '' };
     const row = document.createElement('div');
     row.className = 'guide-row';
-    row.innerHTML = `<div><strong>${escapeHtml(def.label)}</strong><br><span>${escapeHtml(help.summary)}</span></div><span class="small-pill">${def.claim ? roleName(def.claim) : 'No claim'}</span>`;
+    const req = actionRequirement(def, key);
+    row.innerHTML = `
+      <div>
+        <strong>${escapeHtml(def.label)}</strong><br>
+        <span>${escapeHtml(help.summary)}</span>
+        <div class="guide-mini">${escapeHtml(blockText(def))}</div>
+      </div>
+      <span class="small-pill ${req.className}">${escapeHtml(req.label)} · ${escapeHtml(req.status)}</span>
+    `;
     root.appendChild(row);
   }
 }
