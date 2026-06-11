@@ -111,16 +111,17 @@ function blockText(def) {
 
 function cardSlotHtml({ face = 'back', role = '', label = '', mine = false } = {}) {
   if (face === 'back') {
-    return `<div class="influence-card back" title="未公開の生存カード"><span class="card-pattern">COUP</span><small>未公開</small></div>`;
+    return `<div class="influence-card back" title="未公開の生存カード"><span class="card-pattern">COUP</span></div>`;
   }
   const title = label || (face === 'dead' ? '公開済み・失ったカード' : '生存中の自分のカード');
-  return `<div class="influence-card ${face}" title="${escapeHtml(title)}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(roleName(role))}</strong>${mine && face === 'alive' ? '<span class="alive-ribbon">生存</span>' : ''}</div>`;
+  const labelHtml = label ? `<small>${escapeHtml(label)}</small>` : '';
+  return `<div class="influence-card ${face}" title="${escapeHtml(title)}">${labelHtml}<strong>${escapeHtml(roleName(role))}</strong>${mine && face === 'alive' ? '<span class="alive-ribbon">生存</span>' : ''}</div>`;
 }
 
 function influenceSlotsForPlayer(player) {
   const slots = [];
   for (let i = 0; i < player.aliveCards; i++) slots.push(cardSlotHtml({ face: 'back' }));
-  for (const card of player.revealed || []) slots.push(cardSlotHtml({ face: 'dead', role: card.role, label: '公開済み' }));
+  for (const card of player.revealed || []) slots.push(cardSlotHtml({ face: 'dead', role: card.role }));
   while (slots.length < 2) slots.push('<div class="influence-card empty"><small>なし</small></div>');
   return slots.slice(0, 2).join('');
 }
@@ -313,7 +314,6 @@ function renderPlayers() {
       <div class="player-stats">
         <span class="stat coin-stat">🪙 ${p.coins}</span>
         <span class="stat alive-stat">生存 ${p.aliveCards}枚</span>
-        <span class="stat revealed-stat">公開 ${(p.revealed || []).length}枚</span>
       </div>
     `;
     root.appendChild(div);
@@ -332,8 +332,8 @@ function renderCards() {
   legend.className = 'card-legend';
   legend.innerHTML = `
     <span><i class="legend-dot alive"></i>生存中の自分のカード</span>
-    <span><i class="legend-dot back"></i>相手の未公開カード</span>
-    <span><i class="legend-dot dead"></i>公開済み・失ったカード</span>
+    <span><i class="legend-dot back"></i>相手の裏向きカード</span>
+    <span><i class="legend-dot dead"></i>失ったカード</span>
   `;
   root.appendChild(legend);
   const wrap = document.createElement('div');
@@ -341,7 +341,7 @@ function renderCards() {
   for (const card of cards) {
     const div = document.createElement('div');
     div.className = `card ${card.alive ? 'alive' : 'dead'}`;
-    div.innerHTML = `<small>${escapeHtml(cardStateLabel(card))}</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
+    div.innerHTML = `<strong>${escapeHtml(roleName(card.role))}</strong>`;
     wrap.appendChild(div);
   }
   root.appendChild(wrap);
@@ -560,7 +560,7 @@ function renderSpecials() {
     const mustChoose = state.pending?.playerId === state.me?.id;
     const box = document.createElement('div');
     box.className = mustChoose ? 'actionBox urgent-box' : 'actionBox waiting-box';
-    box.innerHTML = `<h3>${mustChoose ? '失うカードを選択' : '影響力喪失待ち'}</h3><p>${mustChoose ? '公開して失うカードを1枚選んでください。' : `${escapeHtml(playerById(state.pending?.playerId)?.name || '対象者')} がカードを選択中です。`}</p>`;
+    box.innerHTML = `<h3>${mustChoose ? '失うカードを選択' : '影響力喪失待ち'}</h3><p>${mustChoose ? '失うカードを1枚選んでください。' : `${escapeHtml(playerById(state.pending?.playerId)?.name || '対象者')} がカードを選択中です。`}</p>`;
     if (mustChoose) {
       const cards = document.createElement('div');
       cards.className = 'cards';

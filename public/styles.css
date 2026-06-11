@@ -303,7 +303,7 @@ button.big { padding: 14px 18px; min-width: 150px; }
   filter: grayscale(1);
 }
 .influence-card.dead::before {
-  content: "公開";
+  content: "";
   position: absolute;
   right: -21px;
   top: 11px;
@@ -349,7 +349,7 @@ button.big { padding: 14px 18px; min-width: 150px; }
   text-decoration: none;
 }
 .card.dead::before {
-  content: "公開済み";
+  content: "";
   position: absolute;
   top: 10px;
   right: 10px;
@@ -552,3 +552,8 @@ button.card.alive strong,
 .exchange-card small {
   color: inherit;
 }
+
+/* v12: visual state is self-evident; hide text ribbons on player cards. */
+.influence-card.dead::before, .card.dead::before { display: none; }
+.influence-card.back small { display: none; }
+.card.alive::before { display: none; }
