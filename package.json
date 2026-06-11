@@ -6,7 +6,8 @@
   "description": "Online Coup board game for Render. Single Node.js server with static public frontend.",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "build": "node --check server.js && node --check public/app.js"
   },
   "engines": {
     "node": ">=20"

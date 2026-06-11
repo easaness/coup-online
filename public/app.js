@@ -27,7 +27,6 @@ function clearRoomSession() {
 let state = null;
 let selectedTargetId = '';
 let selectedAction = '';
-let exchangeSelection = new Set();
 
 const $ = (id) => document.getElementById(id);
 const roleName = (role) => state?.roles?.[role] || role;
@@ -217,7 +216,7 @@ function makeChip(text, kind = '') {
 function phaseKind(phase) {
   if (phase === 'finished') return 'success';
   if (phase === 'loseInfluence' || phase === 'blockChallenge') return 'danger';
-  if (phase === 'reaction' || phase === 'exchange' || phase === 'ambassadorDeclare' || phase === 'ambassadorSwap' || phase === 'ambassadorChallengeReplace') return 'warning';
+  if (phase === 'reaction' || phase === 'ambassadorDeclare' || phase === 'ambassadorSwap' || phase === 'ambassadorChallengeReplace') return 'warning';
   return '';
 }
 
@@ -292,9 +291,6 @@ function render() {
   } else if (state.phase === 'ambassadorChallengeReplace') {
     headline = 'Ambassadorの引き直し中です';
     status = state.exchange ? '山札から引いた2枚のうち、新しいカードを1枚選んでください。' : 'アクション実行者が新しいカードを選択中です。';
-  } else if (state.phase === 'exchange') {
-    headline = 'カード交換中です';
-    status = state.exchangeOptions?.length ? '残したい2枚を選んで確定してください。' : '交換するプレイヤーの選択を待っています。';
   } else if (state.phase === 'finished') {
     headline = `${winner?.name || ''} の勝利！`;
     status = state.hostId === me?.id ? '同じメンバーでもう一度対戦できます。' : 'ホストが再戦を開始できます。';
@@ -699,36 +695,6 @@ function renderSpecials() {
     root.appendChild(box);
   }
 
-  if (state.phase === 'exchange') {
-    const isMine = state.exchangeOptions.length > 0;
-    const box = document.createElement('div');
-    box.className = isMine ? 'actionBox urgent-box' : 'actionBox waiting-box';
-    box.innerHTML = `<h3>${isMine ? '交換するカードを選択' : 'カード交換待ち'}</h3><p>${isMine ? '手札と引いたカードの中から、残す2枚を選択してください。' : '交換アクションのプレイヤーが選択中です。'}</p>`;
-
-    if (isMine) {
-      const cards = document.createElement('div');
-      cards.className = 'cards';
-      for (const card of state.exchangeOptions) {
-        const div = document.createElement('div');
-        div.className = `card alive selectable ${exchangeSelection.has(card.id) ? 'selected' : ''}`;
-        div.innerHTML = `<small>${exchangeSelection.has(card.id) ? '残すカード' : '交換候補'}</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
-        div.onclick = () => {
-          if (exchangeSelection.has(card.id)) exchangeSelection.delete(card.id);
-          else if (exchangeSelection.size < 2) exchangeSelection.add(card.id);
-          renderSpecials();
-        };
-        cards.appendChild(div);
-      }
-      box.appendChild(cards);
-      const confirm = createButton(`この2枚を残す（${exchangeSelection.size}/2）`, () => {
-        emit('chooseExchange', { roomId: state.roomId, keepCardIds: [...exchangeSelection] });
-        exchangeSelection = new Set();
-      }, 'primary');
-      confirm.disabled = exchangeSelection.size !== 2;
-      box.appendChild(confirm);
-    }
-    root.appendChild(box);
-  }
 }
 
 function canBlockReact() {
@@ -793,7 +759,6 @@ function resetToLobby(message = '') {
   state = null;
   selectedTargetId = '';
   selectedAction = '';
-  exchangeSelection = new Set();
   $('lobby').classList.remove('hidden');
   $('roomBadge').classList.add('hidden');
   $('statusBoard').classList.add('hidden');
@@ -829,8 +794,7 @@ socket.on('roomState', (next) => {
   if (previousPhase !== state.phase) {
     selectedAction = '';
     if (state.phase !== 'action') selectedTargetId = '';
-    exchangeSelection = new Set();
-  }
+    }
   render();
 });
 socket.on('spotlight', ({ message, tone } = {}) => {

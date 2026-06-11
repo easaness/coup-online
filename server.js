@@ -73,12 +73,26 @@ function persistRooms() {
   }
 }
 
+
+function migrateRoom(room) {
+  if (!room || typeof room !== 'object') return room;
+  if (room.phase === 'exchange') {
+    const player = room.exchange?.playerId ? findPlayer(room, room.exchange.playerId) : null;
+    room.phase = 'action';
+    room.pending = null;
+    room.exchange = null;
+    room.awaitingLoss = null;
+    if (player) addLog(room, `${player.name} の旧Exchange状態をリセットしました。もう一度Exchangeを宣言してください。`);
+  }
+  return room;
+}
+
 function loadRooms() {
   try {
     if (!fs.existsSync(DATA_FILE)) return;
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     for (const item of raw) {
-      const room = reviveSets(item);
+      const room = migrateRoom(reviveSets(item));
       for (const player of room.players || []) {
         player.socketId = null;
         player.connected = false;
@@ -211,8 +225,7 @@ function publicStateFor(room, viewerId) {
       declaredCard: room.exchange.declaredCard ? { id: room.exchange.declaredCard.id, role: room.exchange.declaredCard.role } : null,
       drawnCards: (room.exchange.drawnCards || []).map((card) => ({ id: card.id, role: card.role })),
       options: (room.exchange.options || []).map((card) => ({ id: card.id, role: card.role }))
-    } : null,
-    exchangeOptions: room.exchange?.playerId === viewerId ? (room.exchange.options || []).map((card) => ({ id: card.id, role: card.role })) : []
+    } : null
   };
 }
 
@@ -735,28 +748,6 @@ function chooseCardToLose(socket, roomId, { cardId }) {
   emitRoom(room.id);
 }
 
-function chooseExchange(socket, roomId, { keepCardIds }) {
-  const room = requireRoom(roomId);
-  if (room.phase !== 'exchange' || room.exchange?.playerId !== socket.data.clientId) throw new Error('今は交換できません。');
-  if (!Array.isArray(keepCardIds) || keepCardIds.length !== 2) throw new Error('残すカードを2枚選んでください。');
-  const actor = findPlayer(room, socket.data.clientId);
-  const uniqueIds = [...new Set(keepCardIds)];
-  if (uniqueIds.length !== 2) throw new Error('別々のカードを2枚選んでください。');
-  const options = room.exchange.options;
-  const keep = uniqueIds.map((id) => options.find((card) => card.id === id));
-  if (keep.some((card) => !card)) throw new Error('有効なカードを選んでください。');
-  const deadCards = actor.cards.filter((card) => !card.alive);
-  const returned = options.filter((card) => !uniqueIds.includes(card.id)).map((card) => ({ ...card, alive: true }));
-  actor.cards = [...deadCards, ...keep.map((card) => ({ ...card, alive: true }))];
-  room.deck = shuffle([...room.deck, ...returned]);
-  room.exchange = null;
-  const message = `${actor.name} はカード交換を完了しました。`;
-  addLog(room, message);
-  broadcastSpotlight(room, message, 'success');
-  nextLivingTurn(room);
-  emitRoom(room.id);
-}
-
 function handleDisconnect(socket) {
   for (const room of rooms.values()) {
     const player = room.players.find((item) => item.socketId === socket.id);
@@ -837,7 +828,6 @@ io.on('connection', (socket) => {
   socket.on('chooseAmbassadorClaimCard', ({ roomId, cardId } = {}, callback = () => {}) => safe(socket, callback, () => chooseAmbassadorClaimCard(socket, roomId, { cardId })));
   socket.on('chooseAmbassadorSwap', ({ roomId, drawnCardId } = {}, callback = () => {}) => safe(socket, callback, () => chooseAmbassadorSwap(socket, roomId, { drawnCardId })));
   socket.on('chooseAmbassadorReplacement', ({ roomId, cardId } = {}, callback = () => {}) => safe(socket, callback, () => chooseAmbassadorReplacement(socket, roomId, { cardId })));
-  socket.on('chooseExchange', ({ roomId, keepCardIds } = {}, callback = () => {}) => safe(socket, callback, () => chooseExchange(socket, roomId, { keepCardIds })));
   socket.on('leaveRoom', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => leaveRoom(socket, roomId)));
   socket.on('disconnect', () => handleDisconnect(socket));
 });
