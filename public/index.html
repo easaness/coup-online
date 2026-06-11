@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Coup Online</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Coup Online</h1>
+      <p>Renderで動くリアルタイム対戦版Coup</p>
+    </header>
+
+    <main>
+      <section class="panel" id="lobby">
+        <h2>ロビー</h2>
+        <label>名前<input id="nameInput" maxlength="24" placeholder="Player" /></label>
+        <div class="row">
+          <button id="createBtn">部屋を作成</button>
+          <input id="roomInput" placeholder="部屋ID" maxlength="5" />
+          <button id="joinBtn">参加</button>
+        </div>
+        <p class="hint">GitHubへは、このZIPの中身をそのままpushしてください。RenderではWeb Serviceとして起動します。</p>
+      </section>
+
+      <section class="panel hidden" id="room">
+        <div class="topline">
+          <h2>Room: <span id="roomIdLabel"></span></h2>
+          <button id="startBtn">ゲーム開始</button>
+        </div>
+        <p id="status"></p>
+        <div class="grid">
+          <div>
+            <h3>プレイヤー</h3>
+            <div id="players"></div>
+          </div>
+          <div>
+            <h3>自分の手札</h3>
+            <div id="myCards" class="cards"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="controls">
+        <h2>操作</h2>
+        <div id="actionArea"></div>
+        <div id="reactionArea"></div>
+        <div id="specialArea"></div>
+      </section>
+
+      <section class="panel hidden" id="logPanel">
+        <h2>ログ</h2>
+        <ol id="log"></ol>
+      </section>
+    </main>
+
+    <div id="toast"></div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
