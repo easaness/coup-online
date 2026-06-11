@@ -206,7 +206,13 @@ function publicStateFor(room, viewerId) {
       coins: me.coins,
       cards: me.cards.map((card) => ({ id: card.id, role: card.role, alive: card.alive }))
     } : null,
-    exchangeOptions: room.exchange?.playerId === viewerId ? room.exchange.options.map((card) => ({ id: card.id, role: card.role })) : []
+    exchange: room.exchange?.playerId === viewerId ? {
+      mode: room.exchange.mode,
+      declaredCard: room.exchange.declaredCard ? { id: room.exchange.declaredCard.id, role: room.exchange.declaredCard.role } : null,
+      drawnCards: (room.exchange.drawnCards || []).map((card) => ({ id: card.id, role: card.role })),
+      options: (room.exchange.options || []).map((card) => ({ id: card.id, role: card.role }))
+    } : null,
+    exchangeOptions: room.exchange?.playerId === viewerId ? (room.exchange.options || []).map((card) => ({ id: card.id, role: card.role })) : []
   };
 }
 
@@ -307,6 +313,7 @@ function replaceRevealedClaimCard(room, player, role) {
 function continueAfterLoss(room) {
   const after = room.awaitingLoss?.after;
   room.awaitingLoss = null;
+  if (after?.kind === 'ambassadorChallengeReplace') return beginAmbassadorChallengeReplacement(room, after.playerId);
   if (finishIfNeeded(room)) return;
   if (!after || after.kind === 'nextTurn') return nextLivingTurn(room);
   if (after.kind === 'continueAction') return completeAction(room, after.pending);
@@ -366,13 +373,8 @@ function completeAction(room, pending) {
       addLog(room, `${actor.name} は ${target.name} から${amount}コイン盗みました。`);
       return nextLivingTurn(room);
     }
-    case 'exchange': {
-      room.phase = 'exchange';
-      room.exchange = { playerId: actor.id, options: [...actor.cards.filter((card) => card.alive), ...draw(room, 2)] };
-      room.pending = { type: 'exchange', playerId: actor.id, responded: new Set() };
-      addLog(room, `${actor.name} は交換するカードを選びます。`);
-      return;
-    }
+    case 'exchange':
+      return beginAmbassadorSwap(room, actor.id, pending.claimedCardId);
     default:
       return nextLivingTurn(room);
   }
@@ -497,6 +499,15 @@ function takeAction(socket, roomId, { action, targetId }) {
     if (!target || target.id === actor.id || aliveCardCount(target) === 0) throw new Error('有効な対象を選んでください。');
   }
   actor.coins -= actionDef.cost ?? 0;
+
+  if (action === 'exchange') {
+    room.phase = 'ambassadorDeclare';
+    room.pending = { type: 'ambassadorDeclare', action, actorId: actor.id, targetId: null, claim: 'ambassador', responded: new Set(), playerId: actor.id };
+    addLog(room, `${actor.name} は Ambassador として宣言するカードを選びます。`);
+    emitRoom(room.id);
+    return;
+  }
+
   const pending = { action, actorId: actor.id, targetId: targetId ?? null, claim: actionDef.claim, responded: new Set() };
   addLog(room, `${actor.name} は ${actionDef.label}${targetId ? ` を ${findPlayer(room, targetId).name} に実行` : ''}しました。`);
   if (!actionDef.claim && actionDef.blockableBy.length === 0) completeAction(room, pending);
@@ -510,10 +521,10 @@ function takeAction(socket, roomId, { action, targetId }) {
 
 function pass(socket, roomId) {
   const room = requireRoom(roomId);
-  if (room.phase !== 'reaction') throw new Error('今はパスできません。');
+  if (room.phase !== 'reaction') throw new Error('今は承諾できません。');
   if (!canRespond(room, socket.data.clientId)) throw new Error('あなたはリアクションできません。');
   room.pending.responded.add(socket.data.clientId);
-  addLog(room, `${findPlayer(room, socket.data.clientId).name} はパスしました。`);
+  addLog(room, `${findPlayer(room, socket.data.clientId).name} は承諾しました。`);
   maybeResolveReaction(room);
   emitRoom(room.id);
 }
@@ -534,6 +545,104 @@ function block(socket, roomId, { role }) {
   emitRoom(room.id);
 }
 
+
+function chooseAmbassadorClaimCard(socket, roomId, { cardId }) {
+  const room = requireRoom(roomId);
+  if (room.phase !== 'ambassadorDeclare' || room.pending?.actorId !== socket.data.clientId) throw new Error('今は宣言カードを選べません。');
+  const actor = findPlayer(room, socket.data.clientId);
+  const card = actor?.cards.find((item) => item.id === cardId && item.alive);
+  if (!card) throw new Error('宣言するカードを選んでください。');
+
+  room.phase = 'reaction';
+  room.pending = {
+    type: 'reaction',
+    action: 'exchange',
+    actorId: actor.id,
+    targetId: null,
+    claim: 'ambassador',
+    claimedCardId: card.id,
+    responded: new Set()
+  };
+  addLog(room, `${actor.name} は手札1枚を Ambassador として宣言しました。`);
+  emitRoom(room.id);
+}
+
+function beginAmbassadorSwap(room, playerId, declaredCardId) {
+  const actor = findPlayer(room, playerId);
+  if (!actor || aliveCardCount(actor) === 0) return nextLivingTurn(room);
+  const declaredCard = actor.cards.find((card) => card.id === declaredCardId && card.alive);
+  if (!declaredCard) {
+    addLog(room, `${actor.name} の宣言カードが見つからないため、交換は行われませんでした。`);
+    return nextLivingTurn(room);
+  }
+  const drawnCards = draw(room, 2);
+  room.phase = 'ambassadorSwap';
+  room.exchange = { mode: 'ambassadorSwap', playerId: actor.id, declaredCard, drawnCards, options: [declaredCard, ...drawnCards] };
+  room.pending = { type: 'ambassadorSwap', playerId: actor.id, responded: new Set() };
+  addLog(room, `${actor.name} は山札から2枚引き、交換するか選びます。`);
+}
+
+function chooseAmbassadorSwap(socket, roomId, { drawnCardId }) {
+  const room = requireRoom(roomId);
+  if (room.phase !== 'ambassadorSwap' || room.exchange?.playerId !== socket.data.clientId) throw new Error('今は交換を選べません。');
+  const actor = findPlayer(room, socket.data.clientId);
+  const declared = actor.cards.find((card) => card.id === room.exchange.declaredCard?.id && card.alive);
+  const drawnCards = room.exchange.drawnCards || [];
+
+  if (!declared) {
+    room.deck = shuffle([...room.deck, ...drawnCards.map((card) => ({ ...card, alive: true }))]);
+    room.exchange = null;
+    addLog(room, `${actor.name} は交換できませんでした。`);
+    nextLivingTurn(room);
+    emitRoom(room.id);
+    return;
+  }
+
+  if (!drawnCardId) {
+    room.deck = shuffle([...room.deck, ...drawnCards.map((card) => ({ ...card, alive: true }))]);
+    room.exchange = null;
+    addLog(room, `${actor.name} は交換しませんでした。`);
+    nextLivingTurn(room);
+    emitRoom(room.id);
+    return;
+  }
+
+  const chosen = drawnCards.find((card) => card.id === drawnCardId);
+  if (!chosen) throw new Error('交換するカードを選んでください。');
+  actor.cards = actor.cards.map((card) => card.id === declared.id ? { ...chosen, alive: true } : card);
+  const returned = [declared, ...drawnCards.filter((card) => card.id !== chosen.id)].map((card) => ({ ...card, alive: true }));
+  room.deck = shuffle([...room.deck, ...returned]);
+  room.exchange = null;
+  addLog(room, `${actor.name} はカードを交換しました。`);
+  nextLivingTurn(room);
+  emitRoom(room.id);
+}
+
+function beginAmbassadorChallengeReplacement(room, playerId) {
+  const actor = findPlayer(room, playerId);
+  if (!actor) return nextLivingTurn(room);
+  const drawnCards = draw(room, 2);
+  room.phase = 'ambassadorChallengeReplace';
+  room.exchange = { mode: 'ambassadorChallengeReplace', playerId: actor.id, drawnCards, options: drawnCards };
+  room.pending = { type: 'ambassadorChallengeReplace', playerId: actor.id, responded: new Set() };
+  addLog(room, `${actor.name} は山札から2枚引き、新しいカードを1枚選びます。`);
+}
+
+function chooseAmbassadorReplacement(socket, roomId, { cardId }) {
+  const room = requireRoom(roomId);
+  if (room.phase !== 'ambassadorChallengeReplace' || room.exchange?.playerId !== socket.data.clientId) throw new Error('今は新しいカードを選べません。');
+  const actor = findPlayer(room, socket.data.clientId);
+  const drawnCards = room.exchange.drawnCards || [];
+  const chosen = drawnCards.find((card) => card.id === cardId);
+  if (!chosen) throw new Error('新しいカードを選んでください。');
+  actor.cards.push({ ...chosen, alive: true });
+  room.deck = shuffle([...room.deck, ...drawnCards.filter((card) => card.id !== chosen.id).map((card) => ({ ...card, alive: true }))]);
+  room.exchange = null;
+  addLog(room, `${actor.name} は新しいカードを1枚選びました。`);
+  nextLivingTurn(room);
+  emitRoom(room.id);
+}
+
 function challenge(socket, roomId) {
   const room = requireRoom(roomId);
   const challenger = findPlayer(room, socket.data.clientId);
@@ -544,14 +653,25 @@ function challenge(socket, roomId) {
     if (!pending.claim) throw new Error('このアクションはチャレンジできません。');
     const actor = findPlayer(room, pending.actorId);
     addLog(room, `${challenger.name} は ${actor.name} の ${ROLES[pending.claim]} 主張にチャレンジしました。`);
-    if (playerHasAliveRole(actor, pending.claim)) {
+    const hasClaim = pending.action === 'exchange' && pending.claimedCardId
+      ? actor.cards.some((card) => card.id === pending.claimedCardId && card.alive && card.role === 'ambassador')
+      : playerHasAliveRole(actor, pending.claim);
+
+    if (hasClaim) {
+      if (pending.action === 'exchange' && pending.claimedCardId) {
+        const declared = actor.cards.find((card) => card.id === pending.claimedCardId && card.alive && card.role === 'ambassador');
+        actor.cards = actor.cards.filter((card) => card.id !== declared.id);
+        room.deck = shuffle([...room.deck, { ...declared, alive: true }]);
+        addLog(room, `${actor.name} は宣言した Ambassador を公開して山札に戻しました。`);
+        return resolveChallengeLoss(room, challenger.id, { kind: 'ambassadorChallengeReplace', playerId: actor.id });
+      }
       replaceRevealedClaimCard(room, actor, pending.claim);
       pending.claim = null;
       pending.responded.add(challenger.id);
       const after = ACTIONS[pending.action].blockableBy.length > 0 ? { kind: 'resumeReaction', pending } : { kind: 'continueAction', pending };
       return resolveChallengeLoss(room, challenger.id, after);
     }
-    addLog(room, `${actor.name} は ${ROLES[pending.claim]} を持っていませんでした。`);
+    addLog(room, `${actor.name} の宣言カードは ${ROLES[pending.claim]} ではありませんでした。`);
     return resolveChallengeLoss(room, actor.id, { kind: 'cancelAction' });
   }
   if (room.phase === 'blockChallenge') {
@@ -702,6 +822,9 @@ io.on('connection', (socket) => {
   socket.on('challenge', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => challenge(socket, roomId)));
   socket.on('acceptBlock', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => acceptBlock(socket, roomId)));
   socket.on('chooseCardToLose', ({ roomId, cardId } = {}, callback = () => {}) => safe(socket, callback, () => chooseCardToLose(socket, roomId, { cardId })));
+  socket.on('chooseAmbassadorClaimCard', ({ roomId, cardId } = {}, callback = () => {}) => safe(socket, callback, () => chooseAmbassadorClaimCard(socket, roomId, { cardId })));
+  socket.on('chooseAmbassadorSwap', ({ roomId, drawnCardId } = {}, callback = () => {}) => safe(socket, callback, () => chooseAmbassadorSwap(socket, roomId, { drawnCardId })));
+  socket.on('chooseAmbassadorReplacement', ({ roomId, cardId } = {}, callback = () => {}) => safe(socket, callback, () => chooseAmbassadorReplacement(socket, roomId, { cardId })));
   socket.on('chooseExchange', ({ roomId, keepCardIds } = {}, callback = () => {}) => safe(socket, callback, () => chooseExchange(socket, roomId, { keepCardIds })));
   socket.on('leaveRoom', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => leaveRoom(socket, roomId)));
   socket.on('disconnect', () => handleDisconnect(socket));

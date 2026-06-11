@@ -144,6 +144,9 @@ const PHASE_TEXT = {
   blockChallenge: 'ブロック確認',
   loseInfluence: '影響力喪失',
   exchange: 'カード交換',
+  ambassadorDeclare: '宣言カード選択',
+  ambassadorSwap: 'Ambassador交換',
+  ambassadorChallengeReplace: 'Ambassador引き直し',
   finished: 'ゲーム終了'
 };
 
@@ -197,7 +200,7 @@ function makeChip(text, kind = '') {
 function phaseKind(phase) {
   if (phase === 'finished') return 'success';
   if (phase === 'loseInfluence' || phase === 'blockChallenge') return 'danger';
-  if (phase === 'reaction' || phase === 'exchange') return 'warning';
+  if (phase === 'reaction' || phase === 'exchange' || phase === 'ambassadorDeclare' || phase === 'ambassadorSwap' || phase === 'ambassadorChallengeReplace') return 'warning';
   return '';
 }
 
@@ -263,6 +266,15 @@ function render() {
   } else if (state.phase === 'reaction' || state.phase === 'blockChallenge' || state.phase === 'loseInfluence') {
     headline = pendingSentence();
     status = state.phase === 'reaction' ? waitList(currentRespondersForReaction()) : state.phase === 'blockChallenge' ? waitList(currentRespondersForBlock()) : '対象者が公開するカードを選択中です。';
+  } else if (state.phase === 'ambassadorDeclare') {
+    headline = state.pending?.playerId === me?.id ? 'Ambassadorとして宣言するカードを選択' : '宣言カード選択中です';
+    status = state.pending?.playerId === me?.id ? '手札から1枚選んでください。チャレンジ判定はこのカードがAmbassadorかどうかで行われます。' : 'アクション実行者が宣言カードを選択中です。';
+  } else if (state.phase === 'ambassadorSwap') {
+    headline = 'Ambassador交換中です';
+    status = state.exchange ? '宣言したカードと山札から引いたカードを交換するか選んでください。' : '交換するプレイヤーの選択を待っています。';
+  } else if (state.phase === 'ambassadorChallengeReplace') {
+    headline = 'Ambassadorの引き直し中です';
+    status = state.exchange ? '山札から引いた2枚のうち、新しいカードを1枚選んでください。' : 'アクション実行者が新しいカードを選択中です。';
   } else if (state.phase === 'exchange') {
     headline = 'カード交換中です';
     status = state.exchangeOptions?.length ? '残したい2枚を選んで確定してください。' : '交換するプレイヤーの選択を待っています。';
@@ -542,7 +554,7 @@ function renderReactions() {
   const buttons = document.createElement('div');
   buttons.className = 'actions';
   if (canReact()) {
-    buttons.appendChild(createButton('パス', () => emit('passReaction', { roomId: state.roomId }), 'secondary'));
+    buttons.appendChild(createButton('承諾', () => emit('passReaction', { roomId: state.roomId }), 'secondary'));
     if (pending.claim) buttons.appendChild(createButton(`${roleName(pending.claim)}を疑う`, () => emit('challenge', { roomId: state.roomId }), 'danger'));
     if (canBlock) {
       for (const role of blockRoles) {
@@ -562,6 +574,76 @@ function renderReactions() {
 function renderSpecials() {
   const root = $('specialArea');
   root.innerHTML = '';
+
+  if (state.phase === 'ambassadorDeclare') {
+    const mustChoose = state.pending?.playerId === state.me?.id;
+    const box = document.createElement('div');
+    box.className = mustChoose ? 'actionBox urgent-box' : 'actionBox waiting-box';
+    box.innerHTML = `<h3>${mustChoose ? 'Ambassadorとして宣言するカードを選択' : '宣言カード選択待ち'}</h3><p>${mustChoose ? '手札から1枚選んでください。ダウト判定は、このカードがAmbassadorかどうかで行われます。' : 'アクション実行者が宣言カードを選択中です。'}</p>`;
+    if (mustChoose) {
+      const cards = document.createElement('div');
+      cards.className = 'cards';
+      for (const card of state.me.cards.filter((c) => c.alive)) {
+        const btn = document.createElement('button');
+        btn.className = 'card alive selectable lose-choice';
+        btn.innerHTML = `<strong>${escapeHtml(roleName(card.role))}</strong>`;
+        btn.onclick = () => emit('chooseAmbassadorClaimCard', { roomId: state.roomId, cardId: card.id });
+        cards.appendChild(btn);
+      }
+      box.appendChild(cards);
+    }
+    root.appendChild(box);
+  }
+
+  if (state.phase === 'ambassadorSwap') {
+    const isMine = Boolean(state.exchange);
+    const box = document.createElement('div');
+    box.className = isMine ? 'actionBox urgent-box' : 'actionBox waiting-box';
+    box.innerHTML = `<h3>${isMine ? '交換するか選択' : 'Ambassador交換待ち'}</h3><p>${isMine ? '宣言したカード1枚と、山札から引いた2枚のうちどちらかを交換できます。' : 'アクション実行者が交換するか選択中です。'}</p>`;
+    if (isMine) {
+      const current = document.createElement('div');
+      current.className = 'exchange-section';
+      current.innerHTML = `<h4>宣言したカード</h4><div class="cards"><div class="card alive"><strong>${escapeHtml(roleName(state.exchange.declaredCard?.role))}</strong></div></div>`;
+      box.appendChild(current);
+
+      const drawn = document.createElement('div');
+      drawn.className = 'exchange-section';
+      drawn.innerHTML = '<h4>山札から引いたカード</h4>';
+      const cards = document.createElement('div');
+      cards.className = 'cards';
+      for (const card of state.exchange.drawnCards || []) {
+        const btn = document.createElement('button');
+        btn.className = 'card alive selectable lose-choice';
+        btn.innerHTML = `<strong>${escapeHtml(roleName(card.role))}</strong>`;
+        btn.onclick = () => emit('chooseAmbassadorSwap', { roomId: state.roomId, drawnCardId: card.id });
+        cards.appendChild(btn);
+      }
+      drawn.appendChild(cards);
+      box.appendChild(drawn);
+      box.appendChild(createButton('交換しない', () => emit('chooseAmbassadorSwap', { roomId: state.roomId, drawnCardId: null }), 'secondary'));
+    }
+    root.appendChild(box);
+  }
+
+  if (state.phase === 'ambassadorChallengeReplace') {
+    const isMine = Boolean(state.exchange);
+    const box = document.createElement('div');
+    box.className = isMine ? 'actionBox urgent-box' : 'actionBox waiting-box';
+    box.innerHTML = `<h3>${isMine ? '新しいカードを選択' : '新しいカード選択待ち'}</h3><p>${isMine ? '公開したAmbassadorは山札に戻りました。山札から引いた2枚のうち1枚を新しいカードとして選んでください。' : 'アクション実行者が新しいカードを選択中です。'}</p>`;
+    if (isMine) {
+      const cards = document.createElement('div');
+      cards.className = 'cards';
+      for (const card of state.exchange.drawnCards || []) {
+        const btn = document.createElement('button');
+        btn.className = 'card alive selectable lose-choice';
+        btn.innerHTML = `<strong>${escapeHtml(roleName(card.role))}</strong>`;
+        btn.onclick = () => emit('chooseAmbassadorReplacement', { roomId: state.roomId, cardId: card.id });
+        cards.appendChild(btn);
+      }
+      box.appendChild(cards);
+    }
+    root.appendChild(box);
+  }
 
   if (state.phase === 'blockChallenge' && state.pending) {
     const box = document.createElement('div');
@@ -730,6 +812,7 @@ socket.on('roomState', (next) => {
   if (previousPhase !== state.phase) {
     selectedAction = '';
     if (state.phase !== 'action') selectedTargetId = '';
+    exchangeSelection = new Set();
   }
   render();
 });
