@@ -50,6 +50,39 @@ const rooms = new Map();
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'rooms.json');
 
+function ensureSet(value) {
+  if (value instanceof Set) return value;
+  if (Array.isArray(value)) return new Set(value);
+  if (value && Array.isArray(value.__set)) return new Set(value.__set);
+  return new Set();
+}
+
+function normalizePending(pending) {
+  if (!pending || typeof pending !== 'object') return pending;
+  pending.responded = ensureSet(pending.responded);
+  return pending;
+}
+
+function normalizeRoomState(room) {
+  if (!room || typeof room !== 'object') return room;
+  room.players ||= [];
+  room.deck ||= [];
+  room.log ||= [];
+  room.pending = normalizePending(room.pending);
+  if (room.phase === 'exchange') {
+    const player = room.exchange?.playerId ? findPlayer(room, room.exchange.playerId) : null;
+    room.phase = 'action';
+    room.pending = null;
+    room.exchange = null;
+    room.awaitingLoss = null;
+    if (player) addLog(room, `${player.name} の旧Exchange状態をリセットしました。もう一度Exchangeを宣言してください。`);
+  }
+  if (room.pending && room.pending.responded && !(room.pending.responded instanceof Set)) {
+    room.pending.responded = ensureSet(room.pending.responded);
+  }
+  return room;
+}
+
 
 function setReplacer(_key, value) {
   if (value instanceof Set) return { __set: [...value] };
@@ -75,16 +108,7 @@ function persistRooms() {
 
 
 function migrateRoom(room) {
-  if (!room || typeof room !== 'object') return room;
-  if (room.phase === 'exchange') {
-    const player = room.exchange?.playerId ? findPlayer(room, room.exchange.playerId) : null;
-    room.phase = 'action';
-    room.pending = null;
-    room.exchange = null;
-    room.awaitingLoss = null;
-    if (player) addLog(room, `${player.name} の旧Exchange状態をリセットしました。もう一度Exchangeを宣言してください。`);
-  }
-  return room;
+  return normalizeRoomState(room);
 }
 
 function loadRooms() {
@@ -175,6 +199,7 @@ loadRooms();
 function requireRoom(roomId) {
   const room = rooms.get(String(roomId || '').trim().toUpperCase());
   if (!room) throw new Error('部屋が見つかりません。');
+  normalizeRoomState(room);
   return room;
 }
 
@@ -188,7 +213,7 @@ function sanitizePending(pending) {
     claim: pending.claim,
     blockerId: pending.blockerId,
     blockRole: pending.blockRole,
-    responded: [...(pending.responded || [])],
+    responded: [...ensureSet(pending.responded)],
     playerId: pending.playerId ?? null
   };
 }
