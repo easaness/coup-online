@@ -110,7 +110,8 @@ function sanitizePending(pending) {
     claim: pending.claim,
     blockerId: pending.blockerId,
     blockRole: pending.blockRole,
-    responded: [...(pending.responded || [])]
+    responded: [...(pending.responded || [])],
+    playerId: pending.playerId ?? null
   };
 }
 
@@ -195,6 +196,24 @@ function canRespond(room, playerId) {
   const pending = room.pending;
   if (!pending || pending.responded.has(playerId)) return false;
   return alivePlayers(room).some((player) => player.id === playerId) && playerId !== pending.actorId;
+}
+
+function blockResponders(room, pending = room.pending) {
+  if (!pending) return [];
+  return alivePlayers(room).filter((player) => player.id !== pending.blockerId);
+}
+
+function canRespondToBlock(room, playerId) {
+  const pending = room.pending;
+  if (!pending || room.phase !== 'blockChallenge') return false;
+  if (pending.responded.has(playerId)) return false;
+  return blockResponders(room, pending).some((player) => player.id === playerId);
+}
+
+function allBlockResponded(room) {
+  const pending = room.pending;
+  if (!pending) return false;
+  return blockResponders(room, pending).every((player) => pending.responded.has(player.id));
 }
 
 function beginLoss(room, playerId, after) {
@@ -415,7 +434,7 @@ function challenge(socket, roomId) {
   }
   if (room.phase === 'blockChallenge') {
     const pending = room.pending;
-    if (socket.id === pending.blockerId) throw new Error('自分のブロックにはチャレンジできません。');
+    if (!canRespondToBlock(room, socket.id)) throw new Error('あなたはこのブロックにリアクションできません。');
     const blocker = findPlayer(room, pending.blockerId);
     addLog(room, `${challenger.name} は ${blocker.name} の ${ROLES[pending.blockRole]} ブロックにチャレンジしました。`);
     if (playerHasAliveRole(blocker, pending.blockRole)) {
@@ -442,9 +461,13 @@ function resolveChallengeLoss(room, loserId, after) {
 function acceptBlock(socket, roomId) {
   const room = requireRoom(roomId);
   if (room.phase !== 'blockChallenge') throw new Error('今はブロック承認できません。');
-  if (socket.id === room.pending.blockerId) throw new Error('ブロックした本人は承認不要です。');
+  if (!canRespondToBlock(room, socket.id)) throw new Error('あなたはこのブロックにリアクションできません。');
+  room.pending.responded.add(socket.id);
   addLog(room, `${findPlayer(room, socket.id).name} はブロックを受け入れました。`);
-  nextLivingTurn(room);
+  if (allBlockResponded(room)) {
+    addLog(room, '全員がブロックを受け入れたため、ブロックが成立しました。');
+    nextLivingTurn(room);
+  }
   emitRoom(room.id);
 }
 

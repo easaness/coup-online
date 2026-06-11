@@ -7,53 +7,113 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header>
-      <h1>Coup Online</h1>
-      <p>Renderで動くリアルタイム対戦版Coup</p>
-    </header>
-
-    <main>
-      <section class="panel" id="lobby">
-        <h2>ロビー</h2>
-        <label>名前<input id="nameInput" maxlength="24" placeholder="Player" /></label>
-        <div class="row">
-          <button id="createBtn">部屋を作成</button>
-          <input id="roomInput" placeholder="部屋ID" maxlength="5" />
-          <button id="joinBtn">参加</button>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Realtime bluffing game</p>
+          <h1>Coup Online</h1>
+          <p class="hero-copy">役職を主張し、疑い、ブロックして最後の1人を目指します。</p>
         </div>
-        <p class="hint">GitHubへは、このZIPの中身をそのままpushしてください。RenderではWeb Serviceとして起動します。</p>
-      </section>
-
-      <section class="panel hidden" id="room">
-        <div class="topline">
-          <h2>Room: <span id="roomIdLabel"></span></h2>
-          <button id="startBtn">ゲーム開始</button>
+        <div class="room-badge hidden" id="roomBadge">
+          <span>ROOM</span>
+          <strong id="roomIdLabel"></strong>
         </div>
-        <p id="status"></p>
-        <div class="grid">
+      </header>
+
+      <main>
+        <section class="panel lobby-card" id="lobby">
           <div>
-            <h3>プレイヤー</h3>
-            <div id="players"></div>
+            <p class="eyebrow">Start</p>
+            <h2>ロビー</h2>
+            <p class="muted">名前を入れて部屋を作成、または共有された部屋IDで参加してください。</p>
           </div>
-          <div>
-            <h3>自分の手札</h3>
-            <div id="myCards" class="cards"></div>
+          <div class="form-grid">
+            <label>プレイヤー名<input id="nameInput" maxlength="24" placeholder="Player" autocomplete="nickname" /></label>
+            <label>部屋ID<input id="roomInput" placeholder="例: ABC23" maxlength="5" autocomplete="off" /></label>
           </div>
-        </div>
-      </section>
+          <div class="row">
+            <button id="createBtn" class="primary big">部屋を作成</button>
+            <button id="joinBtn" class="secondary big">部屋に参加</button>
+          </div>
+          <div class="quick-rules">
+            <strong>遊び方</strong>
+            <span>自分の手札は2枚。役職は持っていなくても主張できます。疑われたらチャレンジされます。</span>
+          </div>
+        </section>
 
-      <section class="panel hidden" id="controls">
-        <h2>操作</h2>
-        <div id="actionArea"></div>
-        <div id="reactionArea"></div>
-        <div id="specialArea"></div>
-      </section>
+        <section class="status-board hidden" id="statusBoard">
+          <div class="turn-card">
+            <p class="eyebrow" id="phaseLabel">Waiting</p>
+            <h2 id="headline">ゲーム待機中</h2>
+            <p id="status" class="muted"></p>
+          </div>
+          <div class="turn-actions">
+            <button id="startBtn" class="primary">ゲーム開始</button>
+            <button id="copyRoomBtn" class="secondary">部屋IDをコピー</button>
+          </div>
+        </section>
 
-      <section class="panel hidden" id="logPanel">
-        <h2>ログ</h2>
-        <ol id="log"></ol>
-      </section>
-    </main>
+        <section class="layout hidden" id="gameLayout">
+          <section class="left-column">
+            <div class="panel my-area">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Your Influence</p>
+                  <h2>自分の手札</h2>
+                </div>
+                <div class="coin-pill"><span>🪙</span><strong id="myCoins">0</strong></div>
+              </div>
+              <div id="myCards" class="cards"></div>
+            </div>
+
+            <div class="panel" id="controls">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Command</p>
+                  <h2>操作</h2>
+                </div>
+              </div>
+              <div id="actionArea"></div>
+              <div id="reactionArea"></div>
+              <div id="specialArea"></div>
+            </div>
+          </section>
+
+          <aside class="right-column">
+            <div class="panel">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Table</p>
+                  <h2>プレイヤー</h2>
+                </div>
+                <span class="small-pill" id="playerCount">0人</span>
+              </div>
+              <div id="players" class="players"></div>
+            </div>
+
+            <div class="panel rule-panel">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Reference</p>
+                  <h2>アクション早見表</h2>
+                </div>
+              </div>
+              <div id="actionGuide" class="guide"></div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="panel hidden" id="logPanel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">History</p>
+              <h2>ログ</h2>
+            </div>
+          </div>
+          <ol id="log"></ol>
+        </section>
+      </main>
+    </div>
 
     <div id="toast"></div>
     <script src="/socket.io/socket.io.js"></script>
