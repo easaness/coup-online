@@ -440,6 +440,24 @@ function renderActions() {
     return;
   }
 
+  if (selectedAction) {
+    const def = state.actions[selectedAction];
+    if (def?.requiresTarget) {
+      const box = document.createElement('div');
+      box.className = 'actionBox target-only-box';
+      box.innerHTML = `<h3>${escapeHtml(def.label)} の対象を選択</h3><p>対象にするプレイヤーをクリックしてください。</p>`;
+      box.appendChild(targetButtonsForAction(selectedAction));
+      const cancel = createButton('アクション選択に戻る', () => {
+        selectedAction = '';
+        selectedTargetId = '';
+        renderActions();
+      }, 'secondary');
+      box.appendChild(cancel);
+      root.appendChild(box);
+      return;
+    }
+  }
+
   const box = document.createElement('div');
   box.className = 'actionBox';
   box.innerHTML = '<h3>アクションをクリックして実行</h3><p>対象が必要なアクションは、アクションをクリックした後に対象プレイヤーをクリックすると実行されます。</p><div class="action-safety-legend"><span class="small-pill free-safe">緑: カード不要</span><span class="small-pill owned-safe">青: 安全</span><span class="small-pill bluff-risk">赤: ダウトリスク</span></div>';
@@ -477,34 +495,13 @@ function renderActions() {
   }
   box.appendChild(grid);
 
-  if (selectedAction) {
-    const def = state.actions[selectedAction];
-    const detail = document.createElement('div');
-    detail.className = 'action-detail';
-    const req = actionRequirement(def, selectedAction);
-    detail.appendChild(makeChip(`${def.label} の対象をクリック`, phaseKind(state.phase)));
-    const note = document.createElement('div');
-    note.className = `claim-note ${req.className}`;
-    note.innerHTML = `<strong>${escapeHtml(req.label)}</strong><span>${escapeHtml(req.detail)}</span>`;
-    detail.appendChild(note);
-    if (def.requiresTarget) {
-      const targetHint = document.createElement('p');
-      targetHint.className = 'muted';
-      targetHint.textContent = '右のプレイヤーカード、または下の対象ボタンをクリックすると実行されます。';
-      detail.appendChild(targetHint);
-      detail.appendChild(targetButtonsForAction(selectedAction));
-    }
-    box.appendChild(detail);
-  } else {
-    const hint = document.createElement('p');
-    hint.className = 'muted';
-    hint.textContent = '対象が必要なアクションは、次にプレイヤーカードをクリックしてください。';
-    box.appendChild(hint);
-  }
+  const hint = document.createElement('p');
+  hint.className = 'muted';
+  hint.textContent = '対象が必要なアクションは、次にプレイヤーカードをクリックしてください。';
+  box.appendChild(hint);
 
   root.appendChild(box);
 }
-
 function canReact() {
   if (!state.pending) return false;
   if ((state.pending.responded || []).includes(state.me?.id)) return false;
