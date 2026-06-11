@@ -3,7 +3,8 @@ const socket = io({ reconnection: true });
 const STORAGE_KEYS = {
   playerId: 'coup.playerId',
   roomId: 'coup.roomId',
-  name: 'coup.name'
+  name: 'coup.name',
+  hostBackup: 'coup.hostBackup'
 };
 
 function getClientId() {
@@ -22,6 +23,47 @@ function saveSession(roomId, name) {
 
 function clearRoomSession() {
   localStorage.removeItem(STORAGE_KEYS.roomId);
+}
+
+function saveHostBackup(backup) {
+  if (!backup?.room?.id || backup.room.hostId !== getClientId()) return;
+  try {
+    localStorage.setItem(STORAGE_KEYS.hostBackup, JSON.stringify(backup));
+  } catch (_error) {
+    toast('復旧用データの保存容量が不足しています。');
+  }
+}
+
+function loadHostBackup(roomId = '') {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.hostBackup);
+    if (!raw) return null;
+    const backup = JSON.parse(raw);
+    if (!backup?.room?.id) return null;
+    if (roomId && backup.room.id !== roomId) return null;
+    if (backup.room.hostId !== getClientId()) return null;
+    return backup;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function clearHostBackup(roomId = '') {
+  const backup = loadHostBackup(roomId);
+  if (!roomId || backup) localStorage.removeItem(STORAGE_KEYS.hostBackup);
+}
+
+function restoreFromHostBackup(backup, onDone = null) {
+  socket.emit('restoreRoomFromSnapshot', { backup, clientId: getClientId() }, (res) => {
+    if (res?.ok) {
+      saveSession(res.value.roomId, localStorage.getItem(STORAGE_KEYS.name) || $('nameInput').value || 'Player');
+      toast('ホストのブラウザ保存データから部屋を復元しました。');
+      if (onDone) onDone(true);
+    } else {
+      toast(res?.error || 'ブラウザ保存データから復元できませんでした。');
+      if (onDone) onDone(false);
+    }
+  });
 }
 
 let state = null;
@@ -785,24 +827,59 @@ function resetToLobby(message = '') {
   if (message) toast(message);
 }
 
-socket.on('connect', () => {
+let reconnectRetryTimer = null;
+let reconnectRetryCount = 0;
+
+function tryReconnectSavedRoom({ allowHostRestore = true, silent = false } = {}) {
   const savedRoomId = localStorage.getItem(STORAGE_KEYS.roomId);
   const savedName = localStorage.getItem(STORAGE_KEYS.name);
   if (savedName && !$('nameInput').value) $('nameInput').value = savedName;
-  if (savedRoomId) {
-    socket.emit('reconnectRoom', { roomId: savedRoomId, clientId: getClientId() }, (res) => {
-      if (res?.ok) saveSession(res.value.roomId, savedName || $('nameInput').value || 'Player');
-      else {
-        clearRoomSession();
-        toast(res?.error || '保存された部屋には復帰できませんでした。');
+  if (!savedRoomId || state?.roomId === savedRoomId) return;
+
+  socket.emit('reconnectRoom', { roomId: savedRoomId, clientId: getClientId() }, (res) => {
+    if (res?.ok) {
+      saveSession(res.value.roomId, savedName || $('nameInput').value || 'Player');
+      reconnectRetryCount = 0;
+      if (reconnectRetryTimer) {
+        clearInterval(reconnectRetryTimer);
+        reconnectRetryTimer = null;
       }
-    });
+      return;
+    }
+
+    const backup = allowHostRestore ? loadHostBackup(savedRoomId) : null;
+    if (backup) {
+      restoreFromHostBackup(backup);
+      return;
+    }
+
+    if (!silent) toast(res?.error || '保存された部屋にはまだ復帰できません。ホストが復元すると再接続できます。');
+  });
+}
+
+socket.on('connect', () => {
+  tryReconnectSavedRoom({ allowHostRestore: true });
+  if (!reconnectRetryTimer) {
+    reconnectRetryTimer = setInterval(() => {
+      if (state || reconnectRetryCount >= 20) {
+        clearInterval(reconnectRetryTimer);
+        reconnectRetryTimer = null;
+        return;
+      }
+      reconnectRetryCount += 1;
+      tryReconnectSavedRoom({ allowHostRestore: true, silent: true });
+    }, 3000);
   }
 });
 
 socket.on('leftRoom', () => {
+  clearHostBackup();
   clearRoomSession();
   resetToLobby('部屋を抜けました。');
+});
+
+socket.on('hostBackupState', (backup) => {
+  saveHostBackup(backup);
 });
 
 socket.on('roomState', (next) => {

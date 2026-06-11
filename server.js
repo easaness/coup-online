@@ -216,12 +216,31 @@ function publicStateFor(room, viewerId) {
   };
 }
 
+function roomBackupSnapshot(room) {
+  const snapshot = JSON.parse(JSON.stringify(room, setReplacer));
+  for (const player of snapshot.players || []) {
+    player.socketId = null;
+    player.connected = false;
+  }
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    room: snapshot
+  };
+}
+
+function emitHostBackup(room) {
+  const host = findPlayer(room, room.hostId);
+  if (host?.socketId) io.to(host.socketId).emit('hostBackupState', roomBackupSnapshot(room));
+}
+
 function emitRoom(roomId) {
   const room = requireRoom(roomId);
   persistRooms();
   for (const player of room.players) {
     if (player.socketId) io.to(player.socketId).emit('roomState', publicStateFor(room, player.id));
   }
+  emitHostBackup(room);
 }
 
 function finishIfNeeded(room) {
@@ -347,6 +366,17 @@ function completeAction(room, pending) {
   const actor = findPlayer(room, pending.actorId);
   const target = findPlayer(room, pending.targetId);
   if (!actor || aliveCardCount(actor) === 0) return nextLivingTurn(room);
+
+  // If a target was eliminated while resolving a challenge/block challenge,
+  // do not try to make that already-eliminated target lose another influence.
+  // Example: Assassinate target falsely blocks with Contessa, gets challenged,
+  // and loses their last card before the assassination effect continues.
+  if ((pending.action === 'coup' || pending.action === 'assassinate' || pending.action === 'steal') &&
+      (!target || aliveCardCount(target) === 0)) {
+    addLog(room, '対象者はすでに脱落しているため、アクション処理を終了します。');
+    return nextLivingTurn(room);
+  }
+
   switch (pending.action) {
     case 'income':
       actor.coins += 1;
@@ -437,6 +467,45 @@ function reconnectRoom(socket, roomId, clientId) {
   player.left = false;
   socket.join(room.id);
   addLog(room, `${player.name} が再接続しました。`);
+  emitRoom(room.id);
+  return room.id;
+}
+
+function restoreRoomFromSnapshot(socket, backup, clientId) {
+  const playerId = bindClient(socket, clientId);
+  const roomPayload = backup?.room;
+  if (!roomPayload || typeof roomPayload !== 'object') throw new Error('復元データが不正です。');
+  const room = reviveSets(JSON.parse(JSON.stringify(roomPayload)));
+  if (!room.id || !Array.isArray(room.players)) throw new Error('復元データに部屋情報がありません。');
+  room.id = String(room.id).trim().toUpperCase();
+  if (!room.hostId || room.hostId !== playerId) throw new Error('このブラウザは復元データのホストではありません。');
+  if (rooms.has(room.id)) throw new Error('同じ部屋IDがすでにサーバー上に存在します。');
+  const host = findPlayer(room, playerId);
+  if (!host) throw new Error('復元データにホストの参加情報がありません。');
+
+  room.phase = room.phase || 'waiting';
+  room.log = Array.isArray(room.log) ? room.log : [];
+  room.deck = Array.isArray(room.deck) ? room.deck : [];
+  room.currentTurnIndex = Number.isInteger(room.currentTurnIndex) ? room.currentTurnIndex : 0;
+  room.pending = reviveSets(room.pending || null);
+  room.awaitingLoss = room.awaitingLoss || null;
+  room.exchange = room.exchange || null;
+  room.winnerId = room.winnerId || null;
+
+  for (const player of room.players) {
+    player.socketId = null;
+    player.connected = false;
+    player.left = Boolean(player.left);
+    player.cards = Array.isArray(player.cards) ? player.cards : [];
+    player.coins = Number.isFinite(player.coins) ? player.coins : 0;
+  }
+
+  host.socketId = socket.id;
+  host.connected = true;
+  host.left = false;
+  socket.join(room.id);
+  addLog(room, `${host.name} のブラウザ保存データから部屋を復元しました。`);
+  rooms.set(room.id, room);
   emitRoom(room.id);
   return room.id;
 }
@@ -814,6 +883,7 @@ io.on('connection', (socket) => {
   socket.on('createRoom', ({ name, clientId } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: createRoom(socket, name, clientId), playerId: socket.data.clientId })));
   socket.on('joinRoom', ({ roomId, name, clientId } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: joinRoom(socket, roomId, name, clientId), playerId: socket.data.clientId })));
   socket.on('reconnectRoom', ({ roomId, clientId } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: reconnectRoom(socket, roomId, clientId), playerId: socket.data.clientId })));
+  socket.on('restoreRoomFromSnapshot', ({ backup, clientId } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: restoreRoomFromSnapshot(socket, backup, clientId), playerId: socket.data.clientId })));
   socket.on('startGame', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => startGame(socket, roomId)));
   socket.on('rematch', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => rematch(socket, roomId)));
   socket.on('takeAction', ({ roomId, action, targetId } = {}, callback = () => {}) => safe(socket, callback, () => takeAction(socket, roomId, { action, targetId })));
