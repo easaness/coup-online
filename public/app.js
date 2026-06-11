@@ -35,55 +35,38 @@ const actionName = (action) => state?.actions?.[action]?.label || action;
 
 const ACTION_HELP = {
   income: {
-    summary: '安全に1コイン獲得。誰にも止められません。',
-    effect: '+1 coin',
-    risk: '安全',
-    requirement: 'カード不要',
-    honesty: 'そのまま実行',
+    effect: '国庫から +1 coin',
+    block: 'ブロック不可',
     tone: 'safe'
   },
   foreignAid: {
-    summary: '2コイン獲得。Dukeにブロックされます。',
-    effect: '+2 coins',
-    risk: 'ブロックあり',
-    requirement: 'カード不要',
-    honesty: 'そのまま実行',
+    effect: '国庫から +2 coins',
+    block: 'Dukeでブロック可',
     tone: 'safe'
   },
   coup: {
-    summary: '7コイン支払い、対象の影響力を1枚失わせます。',
-    effect: '対象-1',
-    risk: '不可避',
-    requirement: 'カード不要',
-    honesty: 'そのまま実行',
+    effect: '7 coins支払い / 対象の影響力 -1',
+    block: 'ブロック不可',
     tone: 'danger'
   },
   tax: {
-    summary: 'Dukeを主張して3コイン獲得。',
-    effect: '+3 coins',
-    risk: 'チャレンジあり',
-    requirement: 'Dukeを主張',
+    effect: '国庫から +3 coins',
+    block: 'ブロック不可',
     tone: 'claim'
   },
   assassinate: {
-    summary: 'Assassinを主張。3コイン支払い、対象を暗殺します。',
-    effect: '対象-1',
-    risk: 'チャレンジ/Contessaでブロック',
-    requirement: 'Assassinを主張',
+    effect: '3 coins支払い / 対象の影響力 -1',
+    block: 'Contessaでブロック可',
     tone: 'danger'
   },
   exchange: {
-    summary: 'Ambassadorを主張。山札から2枚引き、2枚を残します。',
-    effect: '交換',
-    risk: 'チャレンジあり',
-    requirement: 'Ambassadorを主張',
+    effect: '山札から2枚引いて交換',
+    block: 'ブロック不可',
     tone: 'claim'
   },
   steal: {
-    summary: 'Captainを主張。対象から最大2コイン奪います。',
-    effect: '奪取',
-    risk: 'チャレンジ/Captain・Ambassadorでブロック',
-    requirement: 'Captainを主張',
+    effect: '対象から最大2 coins奪う',
+    block: 'Captain / Ambassadorでブロック可',
     tone: 'claim'
   }
 };
@@ -99,24 +82,24 @@ function hasAliveRole(role) {
 function actionRequirement(def, key) {
   const help = ACTION_HELP[key] || {};
   if (!def.claim) return {
-    label: help.requirement || 'カード不要',
+    label: 'カード不要',
     status: 'リスクなし',
-    detail: '役職カードを持っていなくても、安全に実行できるアクションです。',
+    detail: 'カード不要のアクションです。',
     className: 'free-safe'
   };
 
   const owned = hasAliveRole(def.claim);
   if (owned) return {
-    label: `${roleName(def.claim)} 所持中`,
+    label: `${roleName(def.claim)}`,
     status: 'リスクなし',
-    detail: `あなたは生存中の${roleName(def.claim)}を持っています。チャレンジされても証明できます。`,
+    detail: `${roleName(def.claim)}を宣言するアクションです。`,
     className: 'owned-safe'
   };
 
   return {
-    label: `${roleName(def.claim)} 未所持`,
+    label: `${roleName(def.claim)}`,
     status: 'ダウトリスクあり',
-    detail: `現在、生存中の${roleName(def.claim)}を持っていません。使用はできますが、チャレンジされると影響力を失います。`,
+    detail: `${roleName(def.claim)}を宣言するアクションです。`,
     className: 'bluff-risk'
   };
 }
@@ -423,12 +406,12 @@ function blockRisk(role) {
   if (hasAliveRole(role)) return {
     className: 'owned-safe',
     label: `${roleName(role)}でブロック`,
-    note: '所持中・安全'
+    note: '安全'
   };
   return {
     className: 'bluff-risk',
     label: `${roleName(role)}でブロック`,
-    note: '未所持・ダウトリスク'
+    note: 'ダウトリスク'
   };
 }
 
@@ -444,7 +427,7 @@ function renderActions() {
 
   const box = document.createElement('div');
   box.className = 'actionBox';
-  box.innerHTML = '<h3>アクションをクリックして実行</h3><p>対象が必要なアクションは、アクションをクリックした後に対象プレイヤーをクリックすると実行されます。</p><div class="action-safety-legend"><span class="small-pill free-safe">緑: カード不要・リスクなし</span><span class="small-pill owned-safe">青: 所持中・リスクなし</span><span class="small-pill bluff-risk">赤: 未所持・ダウトリスクあり</span></div>';
+  box.innerHTML = '<h3>アクションをクリックして実行</h3><p>対象が必要なアクションは、アクションをクリックした後に対象プレイヤーをクリックすると実行されます。</p><div class="action-safety-legend"><span class="small-pill free-safe">緑: カード不要</span><span class="small-pill owned-safe">青: 安全</span><span class="small-pill bluff-risk">赤: ダウトリスク</span></div>';
 
   if (state.me.coins >= 10) {
     const warning = document.createElement('div');
@@ -467,13 +450,10 @@ function renderActions() {
       <span class="name">${escapeHtml(def.label)}${def.cost ? ` · ${def.cost} coins` : ''}</span>
       <span class="claim-line ${req.className}">
         <span class="claim-badge">${escapeHtml(req.label)}</span>
-        <span class="truth-badge">${escapeHtml(req.status)}</span>
       </span>
-      <span class="desc">${escapeHtml(help.summary)}</span>
-      <span class="meta">
+      <span class="meta concise-action-info">
         <span class="phase-chip">${escapeHtml(help.effect)}</span>
-        <span class="phase-chip ${help.risk.includes('チャレンジ') || help.risk.includes('ブロック') ? 'warning' : ''}">${escapeHtml(help.risk)}</span>
-        <span class="phase-chip ${def.blockableBy?.length ? 'danger' : 'success'}">${escapeHtml(blockText(def))}</span>
+        <span class="phase-chip ${def.blockableBy?.length ? 'danger' : 'success'}">${escapeHtml(help.block || blockText(def))}</span>
       </span>
     `;
     button.onclick = () => executeOrAskTarget(key, def);
@@ -587,7 +567,7 @@ function renderSpecials() {
       for (const card of state.me.cards.filter((c) => c.alive)) {
         const cardButton = document.createElement('button');
         cardButton.className = 'card alive selectable lose-choice';
-        cardButton.innerHTML = `<small>このカードを公開して失う</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
+        cardButton.innerHTML = `<strong>${escapeHtml(roleName(card.role))}</strong>`;
         cardButton.onclick = () => emit('chooseCardToLose', { roomId: state.roomId, cardId: card.id });
         cards.appendChild(cardButton);
       }
@@ -639,17 +619,17 @@ function renderActionGuide() {
   root.innerHTML = '';
   if (!state.actions) return;
   for (const [key, def] of Object.entries(state.actions)) {
-    const help = ACTION_HELP[key] || { summary: '', risk: '' };
+    const help = ACTION_HELP[key] || { effect: '', block: '' };
     const row = document.createElement('div');
     row.className = 'guide-row';
     const req = actionRequirement(def, key);
     row.innerHTML = `
       <div>
         <strong>${escapeHtml(def.label)}</strong><br>
-        <span>${escapeHtml(help.summary)}</span>
-        <div class="guide-mini">${escapeHtml(blockText(def))}</div>
+        <span>${escapeHtml(help.effect)}</span>
+        <div class="guide-mini">${escapeHtml(help.block || blockText(def))}</div>
       </div>
-      <span class="small-pill ${req.className}">${escapeHtml(req.label)} · ${escapeHtml(req.status)}</span>
+      <span class="small-pill ${req.className}">${escapeHtml(req.label)}</span>
     `;
     root.appendChild(row);
   }
