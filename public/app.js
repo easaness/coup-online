@@ -27,6 +27,7 @@ function clearRoomSession() {
 let state = null;
 let selectedTargetId = '';
 let selectedAction = '';
+let exchangeSelection = new Set();
 
 const $ = (id) => document.getElementById(id);
 const roleName = (role) => state?.roles?.[role] || role;
@@ -142,34 +143,18 @@ const PHASE_TEXT = {
   reaction: 'リアクション待ち',
   blockChallenge: 'ブロック確認',
   loseInfluence: '影響力喪失',
+  exchange: 'カード交換',
   ambassadorDeclare: '宣言カード選択',
   ambassadorSwap: 'Ambassador交換',
   ambassadorChallengeReplace: 'Ambassador引き直し',
   finished: 'ゲーム終了'
 };
 
-function toast(message, tone = 'info') {
-  const container = $('toast');
-  if (!container) return;
-
-  const item = document.createElement('div');
-  const normalizedTone = tone === 'success' ? 'success' : tone === 'neutral' ? 'neutral' : 'info';
-  item.className = `toast-item ${normalizedTone}`;
-  item.innerHTML = `
-    <span class="toast-mark">${normalizedTone === 'success' ? '✓' : normalizedTone === 'neutral' ? '—' : '!'}</span>
-    <strong>${escapeHtml(message)}</strong>
-  `;
-  container.appendChild(item);
-
-  requestAnimationFrame(() => item.classList.add('show'));
-  setTimeout(() => {
-    item.classList.remove('show');
-    item.addEventListener('transitionend', () => item.remove(), { once: true });
-  }, 3000);
-}
-
-function spotlight(message, tone = 'success') {
-  toast(message, tone);
+function toast(message) {
+  const el = $('toast');
+  el.textContent = message;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2800);
 }
 
 function emit(event, payload = {}, onSuccess = null) {
@@ -215,7 +200,7 @@ function makeChip(text, kind = '') {
 function phaseKind(phase) {
   if (phase === 'finished') return 'success';
   if (phase === 'loseInfluence' || phase === 'blockChallenge') return 'danger';
-  if (phase === 'reaction' || phase === 'ambassadorDeclare' || phase === 'ambassadorSwap' || phase === 'ambassadorChallengeReplace') return 'warning';
+  if (phase === 'reaction' || phase === 'exchange' || phase === 'ambassadorDeclare' || phase === 'ambassadorSwap' || phase === 'ambassadorChallengeReplace') return 'warning';
   return '';
 }
 
@@ -290,6 +275,9 @@ function render() {
   } else if (state.phase === 'ambassadorChallengeReplace') {
     headline = 'Ambassadorの引き直し中です';
     status = state.exchange ? '山札から引いた2枚のうち、新しいカードを1枚選んでください。' : 'アクション実行者が新しいカードを選択中です。';
+  } else if (state.phase === 'exchange') {
+    headline = 'カード交換中です';
+    status = state.exchangeOptions?.length ? '残したい2枚を選んで確定してください。' : '交換するプレイヤーの選択を待っています。';
   } else if (state.phase === 'finished') {
     headline = `${winner?.name || ''} の勝利！`;
     status = state.hostId === me?.id ? '同じメンバーでもう一度対戦できます。' : 'ホストが再戦を開始できます。';
@@ -665,7 +653,7 @@ function renderSpecials() {
     const buttons = document.createElement('div');
     buttons.className = 'actions';
     if (canBlockReact()) {
-      buttons.appendChild(createButton('承諾', () => emit('acceptBlock', { roomId: state.roomId }), 'secondary')); 
+      buttons.appendChild(createButton('ブロックを受け入れる', () => emit('acceptBlock', { roomId: state.roomId }), 'secondary'));
       buttons.appendChild(createButton('ブロックを疑う', () => emit('challenge', { roomId: state.roomId }), 'danger'));
     } else {
       box.appendChild(makeChip(waitList(currentRespondersForBlock()), 'warning'));
@@ -694,6 +682,36 @@ function renderSpecials() {
     root.appendChild(box);
   }
 
+  if (state.phase === 'exchange') {
+    const isMine = state.exchangeOptions.length > 0;
+    const box = document.createElement('div');
+    box.className = isMine ? 'actionBox urgent-box' : 'actionBox waiting-box';
+    box.innerHTML = `<h3>${isMine ? '交換するカードを選択' : 'カード交換待ち'}</h3><p>${isMine ? '手札と引いたカードの中から、残す2枚を選択してください。' : '交換アクションのプレイヤーが選択中です。'}</p>`;
+
+    if (isMine) {
+      const cards = document.createElement('div');
+      cards.className = 'cards';
+      for (const card of state.exchangeOptions) {
+        const div = document.createElement('div');
+        div.className = `card alive selectable ${exchangeSelection.has(card.id) ? 'selected' : ''}`;
+        div.innerHTML = `<small>${exchangeSelection.has(card.id) ? '残すカード' : '交換候補'}</small><strong>${escapeHtml(roleName(card.role))}</strong>`;
+        div.onclick = () => {
+          if (exchangeSelection.has(card.id)) exchangeSelection.delete(card.id);
+          else if (exchangeSelection.size < 2) exchangeSelection.add(card.id);
+          renderSpecials();
+        };
+        cards.appendChild(div);
+      }
+      box.appendChild(cards);
+      const confirm = createButton(`この2枚を残す（${exchangeSelection.size}/2）`, () => {
+        emit('chooseExchange', { roomId: state.roomId, keepCardIds: [...exchangeSelection] });
+        exchangeSelection = new Set();
+      }, 'primary');
+      confirm.disabled = exchangeSelection.size !== 2;
+      box.appendChild(confirm);
+    }
+    root.appendChild(box);
+  }
 }
 
 function canBlockReact() {
@@ -758,6 +776,7 @@ function resetToLobby(message = '') {
   state = null;
   selectedTargetId = '';
   selectedAction = '';
+  exchangeSelection = new Set();
   $('lobby').classList.remove('hidden');
   $('roomBadge').classList.add('hidden');
   $('statusBoard').classList.add('hidden');
@@ -787,21 +806,14 @@ socket.on('leftRoom', () => {
 });
 
 socket.on('roomState', (next) => {
-  try {
-    const previousPhase = state?.phase;
-    state = next;
-    if (state?.roomId) saveSession(state.roomId, state.me?.name || localStorage.getItem(STORAGE_KEYS.name) || 'Player');
-    if (previousPhase !== state?.phase) {
-      selectedAction = '';
-      if (state?.phase !== 'action') selectedTargetId = '';
-    }
-    render();
-  } catch (error) {
-    console.error(error);
-    toast('画面更新中にエラーが発生しました。再読み込みしてください。');
+  const previousPhase = state?.phase;
+  state = next;
+  if (state.roomId) saveSession(state.roomId, state.me?.name || localStorage.getItem(STORAGE_KEYS.name) || 'Player');
+  if (previousPhase !== state.phase) {
+    selectedAction = '';
+    if (state.phase !== 'action') selectedTargetId = '';
+    exchangeSelection = new Set();
   }
-});
-socket.on('spotlight', ({ message, tone } = {}) => {
-  if (message) spotlight(message, tone);
+  render();
 });
 socket.on('errorMessage', toast);
