@@ -68,6 +68,9 @@ function normalizeRoomState(room) {
   room.players ||= [];
   room.deck ||= [];
   room.log ||= [];
+  room.currentTurnIndex = Number.isInteger(room.currentTurnIndex) ? room.currentTurnIndex : 0;
+  if (room.currentTurnIndex < 0 || room.currentTurnIndex >= Math.max(room.players.length, 1)) room.currentTurnIndex = 0;
+  room.phase ||= 'waiting';
   room.pending = normalizePending(room.pending);
   if (room.phase === 'exchange') {
     const player = room.exchange?.playerId ? findPlayer(room, room.exchange.playerId) : null;
@@ -214,7 +217,8 @@ function sanitizePending(pending) {
     blockerId: pending.blockerId,
     blockRole: pending.blockRole,
     responded: [...ensureSet(pending.responded)],
-    playerId: pending.playerId ?? null
+    playerId: pending.playerId ?? null,
+    claimedCardId: pending.claimedCardId ?? null
   };
 }
 

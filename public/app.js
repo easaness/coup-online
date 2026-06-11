@@ -142,7 +142,6 @@ const PHASE_TEXT = {
   reaction: 'リアクション待ち',
   blockChallenge: 'ブロック確認',
   loseInfluence: '影響力喪失',
-  exchange: 'カード交換',
   ambassadorDeclare: '宣言カード選択',
   ambassadorSwap: 'Ambassador交換',
   ambassadorChallengeReplace: 'Ambassador引き直し',
@@ -666,7 +665,7 @@ function renderSpecials() {
     const buttons = document.createElement('div');
     buttons.className = 'actions';
     if (canBlockReact()) {
-      buttons.appendChild(createButton('ブロックを受け入れる', () => emit('acceptBlock', { roomId: state.roomId }), 'secondary'));
+      buttons.appendChild(createButton('承諾', () => emit('acceptBlock', { roomId: state.roomId }), 'secondary')); 
       buttons.appendChild(createButton('ブロックを疑う', () => emit('challenge', { roomId: state.roomId }), 'danger'));
     } else {
       box.appendChild(makeChip(waitList(currentRespondersForBlock()), 'warning'));
@@ -788,14 +787,19 @@ socket.on('leftRoom', () => {
 });
 
 socket.on('roomState', (next) => {
-  const previousPhase = state?.phase;
-  state = next;
-  if (state.roomId) saveSession(state.roomId, state.me?.name || localStorage.getItem(STORAGE_KEYS.name) || 'Player');
-  if (previousPhase !== state.phase) {
-    selectedAction = '';
-    if (state.phase !== 'action') selectedTargetId = '';
+  try {
+    const previousPhase = state?.phase;
+    state = next;
+    if (state?.roomId) saveSession(state.roomId, state.me?.name || localStorage.getItem(STORAGE_KEYS.name) || 'Player');
+    if (previousPhase !== state?.phase) {
+      selectedAction = '';
+      if (state?.phase !== 'action') selectedTargetId = '';
     }
-  render();
+    render();
+  } catch (error) {
+    console.error(error);
+    toast('画面更新中にエラーが発生しました。再読み込みしてください。');
+  }
 });
 socket.on('spotlight', ({ message, tone } = {}) => {
   if (message) spotlight(message, tone);

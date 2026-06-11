@@ -1,6 +1,6 @@
 {
   "name": "coup-online-render",
-  "version": "1.0.0",
+  "version": "1.0.25",
   "private": true,
   "type": "module",
   "description": "Online Coup board game for Render. Single Node.js server with static public frontend.",
