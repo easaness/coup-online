@@ -3,6 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import { Server } from 'socket.io';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -40,6 +41,61 @@ const MAX_PLAYERS = 6;
 const MIN_PLAYERS = 2;
 const ROOM_ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const rooms = new Map();
+const DATA_DIR = path.join(__dirname, 'data');
+const DATA_FILE = path.join(DATA_DIR, 'rooms.json');
+
+
+function setReplacer(_key, value) {
+  if (value instanceof Set) return { __set: [...value] };
+  return value;
+}
+
+function reviveSets(value) {
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(reviveSets);
+  if (Array.isArray(value.__set)) return new Set(value.__set);
+  for (const key of Object.keys(value)) value[key] = reviveSets(value[key]);
+  return value;
+}
+
+function persistRooms() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DATA_FILE, JSON.stringify([...rooms.values()], setReplacer, 2));
+  } catch (error) {
+    console.error('Failed to persist rooms:', error.message);
+  }
+}
+
+function loadRooms() {
+  try {
+    if (!fs.existsSync(DATA_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    for (const item of raw) {
+      const room = reviveSets(item);
+      for (const player of room.players || []) {
+        player.socketId = null;
+        player.connected = false;
+      }
+      rooms.set(room.id, room);
+    }
+    console.log(`Loaded ${rooms.size} persisted room(s).`);
+  } catch (error) {
+    console.error('Failed to load persisted rooms:', error.message);
+  }
+}
+
+function normalizeClientId(value) {
+  const id = String(value || '').trim();
+  if (/^[a-zA-Z0-9_-]{12,80}$/.test(id)) return id;
+  return randomUUID();
+}
+
+function bindClient(socket, clientId) {
+  const id = normalizeClientId(clientId);
+  socket.data.clientId = id;
+  return id;
+}
 
 function makeRoomId() {
   let id = '';
@@ -94,6 +150,8 @@ function addLog(room, message) {
   room.log = room.log.slice(-100);
 }
 
+loadRooms();
+
 function requireRoom(roomId) {
   const room = rooms.get(String(roomId || '').trim().toUpperCase());
   if (!room) throw new Error('部屋が見つかりません。');
@@ -133,7 +191,8 @@ function publicStateFor(room, viewerId) {
       coins: player.coins,
       aliveCards: aliveCardCount(player),
       revealed: player.cards.filter((card) => !card.alive).map((card) => ({ id: card.id, role: card.role })),
-      connected: player.connected
+      connected: player.connected,
+      left: Boolean(player.left)
     })),
     me: me ? {
       id: me.id,
@@ -147,7 +206,10 @@ function publicStateFor(room, viewerId) {
 
 function emitRoom(roomId) {
   const room = requireRoom(roomId);
-  for (const player of room.players) io.to(player.id).emit('roomState', publicStateFor(room, player.id));
+  persistRooms();
+  for (const player of room.players) {
+    if (player.socketId) io.to(player.socketId).emit('roomState', publicStateFor(room, player.id));
+  }
 }
 
 function finishIfNeeded(room) {
@@ -310,12 +372,13 @@ function completeAction(room, pending) {
   }
 }
 
-function createRoom(socket, name) {
+function createRoom(socket, name, clientId) {
+  const playerId = bindClient(socket, clientId);
   let roomId = makeRoomId();
   while (rooms.has(roomId)) roomId = makeRoomId();
   const room = {
     id: roomId,
-    hostId: socket.id,
+    hostId: playerId,
     phase: 'waiting',
     players: [],
     deck: [],
@@ -324,30 +387,55 @@ function createRoom(socket, name) {
     pending: null,
     awaitingLoss: null,
     exchange: null,
-    winnerId: null
+    winnerId: null,
+    createdAt: new Date().toISOString()
   };
   rooms.set(roomId, room);
-  joinRoom(socket, roomId, name);
+  joinRoom(socket, roomId, name, playerId);
   return roomId;
 }
 
-function joinRoom(socket, roomId, name) {
+function joinRoom(socket, roomId, name, clientId) {
+  const playerId = bindClient(socket, clientId);
   const room = requireRoom(roomId);
-  if (room.phase !== 'waiting') throw new Error('この部屋はすでにゲーム開始済みです。');
-  if (room.players.length >= MAX_PLAYERS) throw new Error('この部屋は満員です。');
-  const existing = findPlayer(room, socket.id);
-  if (existing) return room.id;
+  const existing = findPlayer(room, playerId);
+  if (existing) {
+    existing.socketId = socket.id;
+    existing.connected = true;
+    existing.left = false;
+    if (name) existing.name = String(name).slice(0, 24);
+    socket.join(room.id);
+    addLog(room, `${existing.name} が復帰しました。`);
+    emitRoom(room.id);
+    return room.id;
+  }
+  if (room.phase !== 'waiting') throw new Error('この部屋はすでにゲーム開始済みです。復帰できるのは元の参加者だけです。');
+  if (room.players.filter((player) => !player.left).length >= MAX_PLAYERS) throw new Error('この部屋は満員です。');
   const playerName = String(name || 'Player').slice(0, 24);
-  room.players.push({ id: socket.id, name: playerName, coins: 2, cards: [], connected: true });
+  room.players.push({ id: playerId, socketId: socket.id, name: playerName, coins: 2, cards: [], connected: true, left: false });
   socket.join(room.id);
   addLog(room, `${playerName} が参加しました。`);
   emitRoom(room.id);
   return room.id;
 }
 
+function reconnectRoom(socket, roomId, clientId) {
+  const playerId = bindClient(socket, clientId);
+  const room = requireRoom(roomId);
+  const player = findPlayer(room, playerId);
+  if (!player) throw new Error('この部屋に復帰できるプレイヤー情報がありません。');
+  player.socketId = socket.id;
+  player.connected = true;
+  player.left = false;
+  socket.join(room.id);
+  addLog(room, `${player.name} が再接続しました。`);
+  emitRoom(room.id);
+  return room.id;
+}
+
 function startGame(socket, roomId) {
   const room = requireRoom(roomId);
-  if (socket.id !== room.hostId) throw new Error('ホストだけが開始できます。');
+  if (socket.data.clientId !== room.hostId) throw new Error('ホストだけが開始できます。');
   if (room.players.length < MIN_PLAYERS) throw new Error('2人以上で開始できます。');
   room.deck = createDeck();
   for (const player of room.players) {
@@ -362,11 +450,11 @@ function startGame(socket, roomId) {
 
 function takeAction(socket, roomId, { action, targetId }) {
   const room = requireRoom(roomId);
-  const actor = findPlayer(room, socket.id);
+  const actor = findPlayer(room, socket.data.clientId);
   const actionDef = ACTIONS[action];
   if (!actionDef) throw new Error('不明なアクションです。');
   if (room.phase !== 'action') throw new Error('今はアクションできません。');
-  if (room.players[room.currentTurnIndex]?.id !== socket.id) throw new Error('あなたのターンではありません。');
+  if (room.players[room.currentTurnIndex]?.id !== socket.data.clientId) throw new Error('あなたのターンではありません。');
   if (aliveCardCount(actor) === 0) throw new Error('脱落済みです。');
   if (actor.coins >= 10 && action !== 'coup') throw new Error('10コイン以上ある場合はCoupが必須です。');
   if (actionDef.cost && actor.coins < actionDef.cost) throw new Error('コインが足りません。');
@@ -389,9 +477,9 @@ function takeAction(socket, roomId, { action, targetId }) {
 function pass(socket, roomId) {
   const room = requireRoom(roomId);
   if (room.phase !== 'reaction') throw new Error('今はパスできません。');
-  if (!canRespond(room, socket.id)) throw new Error('あなたはリアクションできません。');
-  room.pending.responded.add(socket.id);
-  addLog(room, `${findPlayer(room, socket.id).name} はパスしました。`);
+  if (!canRespond(room, socket.data.clientId)) throw new Error('あなたはリアクションできません。');
+  room.pending.responded.add(socket.data.clientId);
+  addLog(room, `${findPlayer(room, socket.data.clientId).name} はパスしました。`);
   maybeResolveReaction(room);
   emitRoom(room.id);
 }
@@ -399,25 +487,25 @@ function pass(socket, roomId) {
 function block(socket, roomId, { role }) {
   const room = requireRoom(roomId);
   if (room.phase !== 'reaction') throw new Error('今はブロックできません。');
-  if (!canRespond(room, socket.id)) throw new Error('あなたはブロックできません。');
+  if (!canRespond(room, socket.data.clientId)) throw new Error('あなたはブロックできません。');
   const action = ACTIONS[room.pending.action];
   if (!action.blockableBy.includes(role)) throw new Error('その役職ではブロックできません。');
-  if (!validBlockers(room, room.pending).some((player) => player.id === socket.id)) throw new Error('このアクションをブロックできる立場ではありません。');
+  if (!validBlockers(room, room.pending).some((player) => player.id === socket.data.clientId)) throw new Error('このアクションをブロックできる立場ではありません。');
   room.pending.type = 'blockChallenge';
-  room.pending.blockerId = socket.id;
+  room.pending.blockerId = socket.data.clientId;
   room.pending.blockRole = role;
-  room.pending.responded = new Set([socket.id]);
+  room.pending.responded = new Set([socket.data.clientId]);
   room.phase = 'blockChallenge';
-  addLog(room, `${findPlayer(room, socket.id).name} は ${ROLES[role]} を主張してブロックしました。`);
+  addLog(room, `${findPlayer(room, socket.data.clientId).name} は ${ROLES[role]} を主張してブロックしました。`);
   emitRoom(room.id);
 }
 
 function challenge(socket, roomId) {
   const room = requireRoom(roomId);
-  const challenger = findPlayer(room, socket.id);
+  const challenger = findPlayer(room, socket.data.clientId);
   if (!challenger || aliveCardCount(challenger) === 0) throw new Error('チャレンジできません。');
   if (room.phase === 'reaction') {
-    if (!canRespond(room, socket.id)) throw new Error('あなたはチャレンジできません。');
+    if (!canRespond(room, socket.data.clientId)) throw new Error('あなたはチャレンジできません。');
     const pending = room.pending;
     if (!pending.claim) throw new Error('このアクションはチャレンジできません。');
     const actor = findPlayer(room, pending.actorId);
@@ -434,7 +522,7 @@ function challenge(socket, roomId) {
   }
   if (room.phase === 'blockChallenge') {
     const pending = room.pending;
-    if (!canRespondToBlock(room, socket.id)) throw new Error('あなたはこのブロックにリアクションできません。');
+    if (!canRespondToBlock(room, socket.data.clientId)) throw new Error('あなたはこのブロックにリアクションできません。');
     const blocker = findPlayer(room, pending.blockerId);
     addLog(room, `${challenger.name} は ${blocker.name} の ${ROLES[pending.blockRole]} ブロックにチャレンジしました。`);
     if (playerHasAliveRole(blocker, pending.blockRole)) {
@@ -461,9 +549,9 @@ function resolveChallengeLoss(room, loserId, after) {
 function acceptBlock(socket, roomId) {
   const room = requireRoom(roomId);
   if (room.phase !== 'blockChallenge') throw new Error('今はブロック承認できません。');
-  if (!canRespondToBlock(room, socket.id)) throw new Error('あなたはこのブロックにリアクションできません。');
-  room.pending.responded.add(socket.id);
-  addLog(room, `${findPlayer(room, socket.id).name} はブロックを受け入れました。`);
+  if (!canRespondToBlock(room, socket.data.clientId)) throw new Error('あなたはこのブロックにリアクションできません。');
+  room.pending.responded.add(socket.data.clientId);
+  addLog(room, `${findPlayer(room, socket.data.clientId).name} はブロックを受け入れました。`);
   if (allBlockResponded(room)) {
     addLog(room, '全員がブロックを受け入れたため、ブロックが成立しました。');
     nextLivingTurn(room);
@@ -473,8 +561,8 @@ function acceptBlock(socket, roomId) {
 
 function chooseCardToLose(socket, roomId, { cardId }) {
   const room = requireRoom(roomId);
-  if (room.phase !== 'loseInfluence' || room.awaitingLoss?.playerId !== socket.id) throw new Error('今はカードを失う場面ではありません。');
-  const player = findPlayer(room, socket.id);
+  if (room.phase !== 'loseInfluence' || room.awaitingLoss?.playerId !== socket.data.clientId) throw new Error('今はカードを失う場面ではありません。');
+  const player = findPlayer(room, socket.data.clientId);
   const card = player.cards.find((item) => item.id === cardId && item.alive);
   if (!card) throw new Error('有効なカードを選んでください。');
   card.alive = false;
@@ -485,9 +573,9 @@ function chooseCardToLose(socket, roomId, { cardId }) {
 
 function chooseExchange(socket, roomId, { keepCardIds }) {
   const room = requireRoom(roomId);
-  if (room.phase !== 'exchange' || room.exchange?.playerId !== socket.id) throw new Error('今は交換できません。');
+  if (room.phase !== 'exchange' || room.exchange?.playerId !== socket.data.clientId) throw new Error('今は交換できません。');
   if (!Array.isArray(keepCardIds) || keepCardIds.length !== 2) throw new Error('残すカードを2枚選んでください。');
-  const actor = findPlayer(room, socket.id);
+  const actor = findPlayer(room, socket.data.clientId);
   const uniqueIds = [...new Set(keepCardIds)];
   if (uniqueIds.length !== 2) throw new Error('別々のカードを2枚選んでください。');
   const options = room.exchange.options;
@@ -505,13 +593,57 @@ function chooseExchange(socket, roomId, { keepCardIds }) {
 
 function handleDisconnect(socket) {
   for (const room of rooms.values()) {
-    const player = findPlayer(room, socket.id);
+    const player = room.players.find((item) => item.socketId === socket.id);
     if (player) {
       player.connected = false;
+      player.socketId = null;
       addLog(room, `${player.name} の接続が切れました。`);
       emitRoom(room.id);
     }
   }
+}
+
+function leaveRoom(socket, roomId) {
+  const room = requireRoom(roomId);
+  const player = findPlayer(room, socket.data.clientId);
+  if (!player) throw new Error('この部屋に参加していません。');
+  socket.leave(room.id);
+  player.connected = false;
+  player.socketId = null;
+  player.left = true;
+
+  if (room.phase === 'waiting') {
+    room.players = room.players.filter((item) => item.id !== player.id);
+    addLog(room, `${player.name} が部屋を抜けました。`);
+    if (room.players.length === 0) {
+      rooms.delete(room.id);
+      persistRooms();
+      socket.emit('leftRoom');
+      return;
+    }
+    if (room.hostId === player.id) room.hostId = room.players[0].id;
+    emitRoom(room.id);
+    socket.emit('leftRoom');
+    return;
+  }
+
+  const livingBefore = aliveCardCount(player);
+  for (const card of player.cards) if (card.alive) card.alive = false;
+  addLog(room, `${player.name} が部屋を抜けたため、残り影響力${livingBefore}枚を公開して脱落しました。`);
+
+  if (room.awaitingLoss?.playerId === player.id) {
+    continueAfterLoss(room);
+  } else if (room.exchange?.playerId === player.id) {
+    nextLivingTurn(room);
+  } else if (room.pending) {
+    room.pending.responded?.add(player.id);
+    if (room.phase === 'reaction') maybeResolveReaction(room);
+    if (room.phase === 'blockChallenge' && allBlockResponded(room)) nextLivingTurn(room);
+  }
+  if (room.players[room.currentTurnIndex]?.id === player.id && room.phase === 'action') nextLivingTurn(room);
+  finishIfNeeded(room);
+  emitRoom(room.id);
+  socket.emit('leftRoom');
 }
 
 function safe(socket, callback, fn) {
@@ -525,8 +657,9 @@ function safe(socket, callback, fn) {
 }
 
 io.on('connection', (socket) => {
-  socket.on('createRoom', ({ name } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: createRoom(socket, name) })));
-  socket.on('joinRoom', ({ roomId, name } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: joinRoom(socket, roomId, name) })));
+  socket.on('createRoom', ({ name, clientId } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: createRoom(socket, name, clientId), playerId: socket.data.clientId })));
+  socket.on('joinRoom', ({ roomId, name, clientId } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: joinRoom(socket, roomId, name, clientId), playerId: socket.data.clientId })));
+  socket.on('reconnectRoom', ({ roomId, clientId } = {}, callback = () => {}) => safe(socket, callback, () => ({ roomId: reconnectRoom(socket, roomId, clientId), playerId: socket.data.clientId })));
   socket.on('startGame', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => startGame(socket, roomId)));
   socket.on('takeAction', ({ roomId, action, targetId } = {}, callback = () => {}) => safe(socket, callback, () => takeAction(socket, roomId, { action, targetId })));
   socket.on('passReaction', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => pass(socket, roomId)));
@@ -535,6 +668,7 @@ io.on('connection', (socket) => {
   socket.on('acceptBlock', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => acceptBlock(socket, roomId)));
   socket.on('chooseCardToLose', ({ roomId, cardId } = {}, callback = () => {}) => safe(socket, callback, () => chooseCardToLose(socket, roomId, { cardId })));
   socket.on('chooseExchange', ({ roomId, keepCardIds } = {}, callback = () => {}) => safe(socket, callback, () => chooseExchange(socket, roomId, { keepCardIds })));
+  socket.on('leaveRoom', ({ roomId } = {}, callback = () => {}) => safe(socket, callback, () => leaveRoom(socket, roomId)));
   socket.on('disconnect', () => handleDisconnect(socket));
 });
 

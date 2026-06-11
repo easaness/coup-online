@@ -1,4 +1,28 @@
-const socket = io();
+const socket = io({ reconnection: true });
+
+const STORAGE_KEYS = {
+  playerId: 'coup.playerId',
+  roomId: 'coup.roomId',
+  name: 'coup.name'
+};
+
+function getClientId() {
+  let id = localStorage.getItem(STORAGE_KEYS.playerId);
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(STORAGE_KEYS.playerId, id);
+  }
+  return id;
+}
+
+function saveSession(roomId, name) {
+  localStorage.setItem(STORAGE_KEYS.roomId, roomId);
+  if (name) localStorage.setItem(STORAGE_KEYS.name, name);
+}
+
+function clearRoomSession() {
+  localStorage.removeItem(STORAGE_KEYS.roomId);
+}
 
 let state = null;
 let selectedTargetId = '';
@@ -139,9 +163,10 @@ function toast(message) {
   setTimeout(() => el.classList.remove('show'), 2800);
 }
 
-function emit(event, payload = {}) {
-  socket.emit(event, payload, (res) => {
+function emit(event, payload = {}, onSuccess = null) {
+  socket.emit(event, { ...payload, clientId: getClientId() }, (res) => {
     if (res && res.ok === false) toast(res.error || 'エラーが発生しました。');
+    else if (res && res.ok && onSuccess) onSuccess(res.value);
   });
 }
 
@@ -267,6 +292,13 @@ function render() {
       toast(`部屋ID: ${state.roomId}`);
     }
   };
+  $('leaveRoomBtn').onclick = () => {
+    if (!state?.roomId) return;
+    emit('leaveRoom', { roomId: state.roomId }, () => {
+      clearRoomSession();
+      resetToLobby('部屋を抜けました。');
+    });
+  };
 
   renderPlayers();
   renderCards();
@@ -356,6 +388,50 @@ function targetSelect() {
   return select;
 }
 
+function targetButtonsForAction(actionKey) {
+  const wrap = document.createElement('div');
+  wrap.className = 'target-button-grid';
+  for (const p of aliveOpponents()) {
+    const btn = createButton(`${p.name} を対象にする`, () => {
+      selectedTargetId = p.id;
+      emit('takeAction', { roomId: state.roomId, action: actionKey, targetId: p.id });
+    }, 'target-button primary');
+    btn.innerHTML = `<strong>${escapeHtml(p.name)}</strong><span>🪙${p.coins} / 影響力${p.aliveCards}</span>`;
+    wrap.appendChild(btn);
+  }
+  return wrap;
+}
+
+function executeOrAskTarget(actionKey, def) {
+  const reason = actionDisabledReason(actionKey, def);
+  if (reason) {
+    toast(reason);
+    return;
+  }
+  if (def.requiresTarget) {
+    selectedAction = actionKey;
+    selectedTargetId = '';
+    renderActions();
+    return;
+  }
+  selectedAction = '';
+  selectedTargetId = '';
+  emit('takeAction', { roomId: state.roomId, action: actionKey, targetId: null });
+}
+
+function blockRisk(role) {
+  if (hasAliveRole(role)) return {
+    className: 'owned-safe',
+    label: `${roleName(role)}でブロック`,
+    note: '所持中・安全'
+  };
+  return {
+    className: 'bluff-risk',
+    label: `${roleName(role)}でブロック`,
+    note: '未所持・ダウトリスク'
+  };
+}
+
 function renderActions() {
   const root = $('actionArea');
   root.innerHTML = '';
@@ -368,7 +444,7 @@ function renderActions() {
 
   const box = document.createElement('div');
   box.className = 'actionBox';
-  box.innerHTML = '<h3>アクションを選択</h3><p>色で安全度を確認できます。</p><div class="action-safety-legend"><span class="small-pill free-safe">緑: カード不要・リスクなし</span><span class="small-pill owned-safe">青: 所持中・リスクなし</span><span class="small-pill bluff-risk">赤: 未所持・ダウトリスクあり</span></div>';
+  box.innerHTML = '<h3>アクションをクリックして実行</h3><p>対象が必要なアクションは、アクションをクリックした後に対象プレイヤーをクリックすると実行されます。</p><div class="action-safety-legend"><span class="small-pill free-safe">緑: カード不要・リスクなし</span><span class="small-pill owned-safe">青: 所持中・リスクなし</span><span class="small-pill bluff-risk">赤: 未所持・ダウトリスクあり</span></div>';
 
   if (state.me.coins >= 10) {
     const warning = document.createElement('div');
@@ -400,11 +476,7 @@ function renderActions() {
         <span class="phase-chip ${def.blockableBy?.length ? 'danger' : 'success'}">${escapeHtml(blockText(def))}</span>
       </span>
     `;
-    button.onclick = () => {
-      selectedAction = key;
-      if (!def.requiresTarget) selectedTargetId = '';
-      renderActions();
-    };
+    button.onclick = () => executeOrAskTarget(key, def);
     if (reason) button.title = reason;
     grid.appendChild(button);
   }
@@ -415,24 +487,23 @@ function renderActions() {
     const detail = document.createElement('div');
     detail.className = 'action-detail';
     const req = actionRequirement(def, selectedAction);
-    detail.appendChild(makeChip(`${def.label} を実行します`, phaseKind(state.phase)));
+    detail.appendChild(makeChip(`${def.label} の対象をクリック`, phaseKind(state.phase)));
     const note = document.createElement('div');
     note.className = `claim-note ${req.className}`;
     note.innerHTML = `<strong>${escapeHtml(req.label)}</strong><span>${escapeHtml(req.detail)}</span>`;
     detail.appendChild(note);
-    if (def.requiresTarget) detail.appendChild(targetSelect());
-    const confirm = createButton('このアクションを宣言', () => {
-      emit('takeAction', { roomId: state.roomId, action: selectedAction, targetId: def.requiresTarget ? selectedTargetId : null });
-    }, selectedAction === 'coup' || selectedAction === 'assassinate' ? 'danger' : 'primary');
-    const missingTarget = def.requiresTarget && !selectedTargetId;
-    confirm.disabled = Boolean(actionDisabledReason(selectedAction, def)) || missingTarget;
-    if (missingTarget) confirm.title = '対象を選択してください';
-    detail.appendChild(confirm);
+    if (def.requiresTarget) {
+      const targetHint = document.createElement('p');
+      targetHint.className = 'muted';
+      targetHint.textContent = '下のプレイヤーボタンをクリックすると、確認ボタンなしでアクションを宣言します。';
+      detail.appendChild(targetHint);
+      detail.appendChild(targetButtonsForAction(selectedAction));
+    }
     box.appendChild(detail);
   } else {
     const hint = document.createElement('p');
     hint.className = 'muted';
-    hint.textContent = 'まず上のカードからアクションを1つ選んでください。';
+    hint.textContent = 'カード不要のアクションは1クリックで実行されます。対象が必要なアクションは、次に対象をクリックしてください。';
     box.appendChild(hint);
   }
 
@@ -471,7 +542,10 @@ function renderReactions() {
     if (pending.claim) buttons.appendChild(createButton(`${roleName(pending.claim)}を疑う`, () => emit('challenge', { roomId: state.roomId }), 'danger'));
     if (canBlock) {
       for (const role of blockRoles) {
-        buttons.appendChild(createButton(`${roleName(role)}でブロック`, () => emit('block', { roomId: state.roomId, role }), 'warning'));
+        const risk = blockRisk(role);
+        const blockButton = createButton(`${risk.label}｜${risk.note}`, () => emit('block', { roomId: state.roomId, role }), `block-button ${risk.className}`);
+        blockButton.title = risk.note;
+        buttons.appendChild(blockButton);
       }
     }
   } else {
@@ -594,23 +668,58 @@ function renderLog() {
 
 $('createBtn').onclick = () => {
   const name = $('nameInput').value.trim() || 'Player';
-  emit('createRoom', { name });
+  emit('createRoom', { name }, (value) => saveSession(value.roomId, name));
 };
 
 $('joinBtn').onclick = () => {
   const name = $('nameInput').value.trim() || 'Player';
   const roomId = $('roomInput').value.trim().toUpperCase();
   if (!roomId) return toast('部屋IDを入力してください。');
-  emit('joinRoom', { name, roomId });
+  emit('joinRoom', { name, roomId }, (value) => saveSession(value.roomId, name));
 };
 
 $('roomInput').addEventListener('input', (event) => {
   event.target.value = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
 });
 
+
+function resetToLobby(message = '') {
+  state = null;
+  selectedTargetId = '';
+  selectedAction = '';
+  exchangeSelection = new Set();
+  $('lobby').classList.remove('hidden');
+  $('roomBadge').classList.add('hidden');
+  $('statusBoard').classList.add('hidden');
+  $('gameLayout').classList.add('hidden');
+  $('logPanel').classList.add('hidden');
+  if (message) toast(message);
+}
+
+socket.on('connect', () => {
+  const savedRoomId = localStorage.getItem(STORAGE_KEYS.roomId);
+  const savedName = localStorage.getItem(STORAGE_KEYS.name);
+  if (savedName && !$('nameInput').value) $('nameInput').value = savedName;
+  if (savedRoomId) {
+    socket.emit('reconnectRoom', { roomId: savedRoomId, clientId: getClientId() }, (res) => {
+      if (res?.ok) saveSession(res.value.roomId, savedName || $('nameInput').value || 'Player');
+      else {
+        clearRoomSession();
+        toast(res?.error || '保存された部屋には復帰できませんでした。');
+      }
+    });
+  }
+});
+
+socket.on('leftRoom', () => {
+  clearRoomSession();
+  resetToLobby('部屋を抜けました。');
+});
+
 socket.on('roomState', (next) => {
   const previousPhase = state?.phase;
   state = next;
+  if (state.roomId) saveSession(state.roomId, state.me?.name || localStorage.getItem(STORAGE_KEYS.name) || 'Player');
   if (previousPhase !== state.phase) {
     selectedAction = '';
     if (state.phase !== 'action') selectedTargetId = '';
