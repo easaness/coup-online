@@ -14,7 +14,13 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: true, methods: ['GET', 'POST'] } });
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-store');
+  }
+}));
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'coup-online', at: new Date().toISOString() }));
 app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

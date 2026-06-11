@@ -408,6 +408,14 @@ function targetButtonsForAction(actionKey) {
   return wrap;
 }
 
+function enterTargetMode(actionKey) {
+  selectedAction = actionKey;
+  selectedTargetId = '';
+  renderActions();
+  renderPlayers();
+  renderActionGuide();
+}
+
 function executeOrAskTarget(actionKey, def) {
   const reason = actionDisabledReason(actionKey, def);
   if (reason) {
@@ -415,9 +423,7 @@ function executeOrAskTarget(actionKey, def) {
     return;
   }
   if (def.requiresTarget) {
-    selectedAction = actionKey;
-    selectedTargetId = '';
-    render();
+    enterTargetMode(actionKey);
     return;
   }
   selectedAction = '';
@@ -448,22 +454,20 @@ function renderActions() {
     return;
   }
 
-  if (selectedAction) {
+  if (isPickingTarget()) {
     const def = state.actions[selectedAction];
-    if (def?.requiresTarget) {
-      const box = document.createElement('div');
-      box.className = 'actionBox target-only-box';
-      box.innerHTML = `<h3>${escapeHtml(def.label)} の対象を選択</h3>`;
-      box.appendChild(targetButtonsForAction(selectedAction));
-      const cancel = createButton('アクション選択に戻る', () => {
-        selectedAction = '';
-        selectedTargetId = '';
-        render();
-      }, 'secondary');
-      box.appendChild(cancel);
-      root.appendChild(box);
-      return;
-    }
+    const box = document.createElement('div');
+    box.className = 'actionBox target-only-box';
+    box.innerHTML = `<h3>${escapeHtml(def.label)} の対象を選択</h3>`;
+    box.appendChild(targetButtonsForAction(selectedAction));
+    const cancel = createButton('アクション選択に戻る', () => {
+      selectedAction = '';
+      selectedTargetId = '';
+      render();
+    }, 'secondary');
+    box.appendChild(cancel);
+    root.appendChild(box);
+    return;
   }
 
   const box = document.createElement('div');
