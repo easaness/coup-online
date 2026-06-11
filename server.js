@@ -224,6 +224,12 @@ function emitRoom(roomId) {
   }
 }
 
+function broadcastSpotlight(room, message, tone = 'success') {
+  for (const player of room.players) {
+    if (player.socketId) io.to(player.socketId).emit('spotlight', { message, tone });
+  }
+}
+
 function finishIfNeeded(room) {
   const alive = alivePlayers(room);
   if (alive.length === 1) {
@@ -601,7 +607,9 @@ function chooseAmbassadorSwap(socket, roomId, { drawnCardId }) {
   if (!drawnCardId) {
     room.deck = shuffle([...room.deck, ...drawnCards.map((card) => ({ ...card, alive: true }))]);
     room.exchange = null;
-    addLog(room, `${actor.name} は交換しませんでした。`);
+    const message = `${actor.name} は交換しませんでした。`;
+    addLog(room, message);
+    broadcastSpotlight(room, message, 'neutral');
     nextLivingTurn(room);
     emitRoom(room.id);
     return;
@@ -613,7 +621,9 @@ function chooseAmbassadorSwap(socket, roomId, { drawnCardId }) {
   const returned = [declared, ...drawnCards.filter((card) => card.id !== chosen.id)].map((card) => ({ ...card, alive: true }));
   room.deck = shuffle([...room.deck, ...returned]);
   room.exchange = null;
-  addLog(room, `${actor.name} はカードを交換しました。`);
+  const message = `${actor.name} はカードを交換しました。`;
+  addLog(room, message);
+  broadcastSpotlight(room, message, 'success');
   nextLivingTurn(room);
   emitRoom(room.id);
 }
@@ -740,7 +750,9 @@ function chooseExchange(socket, roomId, { keepCardIds }) {
   actor.cards = [...deadCards, ...keep.map((card) => ({ ...card, alive: true }))];
   room.deck = shuffle([...room.deck, ...returned]);
   room.exchange = null;
-  addLog(room, `${actor.name} はカード交換を完了しました。`);
+  const message = `${actor.name} はカード交換を完了しました。`;
+  addLog(room, message);
+  broadcastSpotlight(room, message, 'success');
   nextLivingTurn(room);
   emitRoom(room.id);
 }

@@ -150,11 +150,28 @@ const PHASE_TEXT = {
   finished: 'ゲーム終了'
 };
 
-function toast(message) {
-  const el = $('toast');
-  el.textContent = message;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 2800);
+function toast(message, tone = 'info') {
+  const container = $('toast');
+  if (!container) return;
+
+  const item = document.createElement('div');
+  const normalizedTone = tone === 'success' ? 'success' : tone === 'neutral' ? 'neutral' : 'info';
+  item.className = `toast-item ${normalizedTone}`;
+  item.innerHTML = `
+    <span class="toast-mark">${normalizedTone === 'success' ? '✓' : normalizedTone === 'neutral' ? '—' : '!'}</span>
+    <strong>${escapeHtml(message)}</strong>
+  `;
+  container.appendChild(item);
+
+  requestAnimationFrame(() => item.classList.add('show'));
+  setTimeout(() => {
+    item.classList.remove('show');
+    item.addEventListener('transitionend', () => item.remove(), { once: true });
+  }, 3000);
+}
+
+function spotlight(message, tone = 'success') {
+  toast(message, tone);
 }
 
 function emit(event, payload = {}, onSuccess = null) {
@@ -815,5 +832,8 @@ socket.on('roomState', (next) => {
     exchangeSelection = new Set();
   }
   render();
+});
+socket.on('spotlight', ({ message, tone } = {}) => {
+  if (message) spotlight(message, tone);
 });
 socket.on('errorMessage', toast);
