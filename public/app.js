@@ -33,6 +33,13 @@ const $ = (id) => document.getElementById(id);
 const roleName = (role) => state?.roles?.[role] || role;
 const actionName = (action) => state?.actions?.[action]?.label || action;
 
+function isPickingTarget() {
+  if (!state || state.phase !== 'action') return false;
+  if (state.currentTurnPlayerId !== state.me?.id) return false;
+  if (!selectedAction) return false;
+  return Boolean(state.actions?.[selectedAction]?.requiresTarget);
+}
+
 const ACTION_HELP = {
   income: {
     effect: '国庫から +1 coin',
@@ -446,7 +453,7 @@ function renderActions() {
     if (def?.requiresTarget) {
       const box = document.createElement('div');
       box.className = 'actionBox target-only-box';
-      box.innerHTML = `<h3>${escapeHtml(def.label)} の対象を選択</h3><p>対象プレイヤーだけを選んでください。</p>`;
+      box.innerHTML = `<h3>${escapeHtml(def.label)} の対象を選択</h3>`;
       box.appendChild(targetButtonsForAction(selectedAction));
       const cancel = createButton('アクション選択に戻る', () => {
         selectedAction = '';
